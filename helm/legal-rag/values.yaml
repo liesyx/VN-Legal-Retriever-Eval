@@ -35,7 +35,7 @@ existingSecret: legal-rag-secrets
 fetchImage: rclone/rclone:1.68.2
 
 resources:
-  requests: { cpu: "500m", memory: 3Gi }
+  requests: { cpu: 500m, memory: 3Gi }   # máy 2 CPU: rolling update cần chỗ cho 2 pod cùng lúc
   limits: { cpu: "2", memory: 4Gi }
 
 # Cụm tắt Traefik: Coolify proxy (HTTPS, domain) -> http://<IP node>:<nodePort> -> pod
@@ -53,3 +53,11 @@ web:
   enabled: true
   repository: harbor.oci.lexsy.pro.vn/legal-rag/web    # Jenkins build cùng tag với image API
   nodePort: 30082
+
+# Trace/log/metrics -> chart helm/observability (namespace observability, cài tay 1 lần — xem README)
+# false: API chạy như cũ, không gửi gì ra ngoài.
+observability:
+  enabled: true
+  tracesEndpoint: http://jaeger.observability:4318/v1/traces
+  logsEndpoint: http://loki.observability:3100/otlp/v1/logs
+  metricsPort: 9100

@@ -19,6 +19,12 @@ spec:
     metadata:
       labels:
         {{- include "legal-rag.labels" . | nindent 8 }}
+      {{- if .Values.observability.enabled }}
+      annotations:                         # Prometheus (chart observability) tự tìm pod có annotation này
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.observability.metricsPort | quote }}
+        prometheus.io/path: /metrics
+      {{- end }}
     spec:
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
@@ -69,6 +75,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - { name: http, containerPort: 8000 }
+            {{- if .Values.observability.enabled }}
+            - { name: metrics, containerPort: {{ .Values.observability.metricsPort }} }   # chỉ Prometheus trong cụm đọc, không qua NodePort
+            {{- end }}
           env:
             - { name: QDRANT_URL, value: {{ .Values.qdrant.url | quote }} }
             - { name: QDRANT_COLLECTION, value: "phapdien_{{ .Values.data.version }}" }
@@ -80,6 +89,18 @@ spec:
             - { name: N8N_WEBHOOK_URL, value: {{ .Values.ask.n8nWebhook | quote }} }
             - { name: ALLOWED_ORIGINS, value: {{ .Values.ask.allowedOrigins | quote }} }
             - { name: ASK_PER_MINUTE, value: {{ .Values.ask.perMinute | quote }} }
+            - { name: APP_VERSION, value: {{ .Values.image.tag | quote }} }
+            {{- with .Values.observability }}{{ if .enabled }}
+            - { name: METRICS_PORT, value: {{ .metricsPort | quote }} }
+            - { name: OTEL_SERVICE_NAME, value: legal-rag-api }
+            - { name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, value: {{ .tracesEndpoint | quote }} }
+            - { name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, value: {{ .logsEndpoint | quote }} }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: OTEL_RESOURCE_ATTRIBUTES, value: "k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE),deployment.environment=dev" }
+            {{- end }}{{ end }}
             - name: QDRANT_API_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: QDRANT_API_KEY } }
             - name: API_TOKEN

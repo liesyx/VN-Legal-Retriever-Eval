@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  labels: { app: jaeger }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: jaeger } }
+  template:
+    metadata:
+      labels: { app: jaeger }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: jaeger
+          image: {{ .Values.jaeger.image }}
+          env:
+            - { name: JAEGER_LISTEN_HOST, value: 0.0.0.0 }   # nhận OTLP từ pod khác, không chỉ localhost
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+            - { name: ui, containerPort: 16686 }
+          readinessProbe:
+            httpGet: { path: /, port: ui }
+            periodSeconds: 10
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          resources:
+            {{- toYaml .Values.jaeger.resources | nindent 12 }}
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger            # API gửi trace: http://jaeger.observability:4318/v1/traces ; Grafana đọc :16686
+  labels: { app: jaeger }
+spec:
+  selector: { app: jaeger }
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
+    - { name: otlp-http, port: 4318, targetPort: otlp-http }
+    - { name: ui, port: 16686, targetPort: ui }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-ui         # chỉ mở UI ra NodePort, cổng nhận trace giữ trong cụm
+  labels: { app: jaeger }
+spec:
+  type: NodePort
+  selector: { app: jaeger }
+  ports:
+    - { name: ui, port: 16686, targetPort: ui, nodePort: {{ .Values.jaeger.uiNodePort }} }

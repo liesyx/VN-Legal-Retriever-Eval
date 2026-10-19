@@ -132,7 +132,60 @@ def main(index_dir):
         api.STATE["http"] = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(500)))
         assert c.post("/ask", headers={"X-Forwarded-For": "9.9.9.9"}, json={"question": "n8n đang lỗi thì sao"}).status_code == 502
     print("✓ API (/search, /ask, giới hạn theo IP)")
+    check_telemetry(api, qr, qs[0])
     print("ALL OK")
+
+
+def check_telemetry(api, qr, question):
+    """Trace /ask -> n8n -> /search nối chung một trace_id; log mang trace_id; metrics có số liệu."""
+    import httpx
+    from opentelemetry import trace
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from prometheus_client import generate_latest
+    import logging
+
+    spans, logs = InMemorySpanExporter(), InMemoryLogRecordExporter()
+    tp = TracerProvider(); tp.add_span_processor(SimpleSpanProcessor(spans)); trace.set_tracer_provider(tp)
+    lp = LoggerProvider(); lp.add_log_record_processor(SimpleLogRecordProcessor(logs)); set_logger_provider(lp)
+    logging.getLogger().addHandler(LoggingHandler(logger_provider=lp))
+
+    from fastapi.testclient import TestClient
+    api.STATE["r"] = qr
+    api.HITS.clear()
+    os.environ.update(ASK_PER_MINUTE="100")
+    with TestClient(api.app) as c:
+        # n8n giả: nhận /ask từ backend rồi gọi lại /search kèm traceparent nhận được (như node HTTP trong n8n)
+        async def n8n(req):
+            assert req.headers.get("traceparent"), "backend phải gửi traceparent sang n8n"
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://api") as inner:
+                r = await inner.post("/search", headers={"X-API-Key": "k3y", "traceparent": req.headers["traceparent"]},
+                                     json={"question": question, "k": 3})
+            assert r.status_code == 200, r.text
+            return httpx.Response(200, json={"ok": True, "answer": "Trả lời [1]", "sources": r.json()["sources"]})
+        api.STATE["http"] = httpx.AsyncClient(transport=httpx.MockTransport(n8n))
+        assert c.post("/ask", headers={"X-Forwarded-For": "7.7.7.7"}, json={"question": question}).status_code == 200
+
+    got = spans.get_finished_spans()
+    names = {s.name for s in got}
+    for need in ("POST /ask", "POST /search", "search", "embed", "qdrant_query", "fuse", "qdrant_payload", "rerank"):
+        assert need in names, (need, names)
+    ask_span = next(s for s in got if s.name == "POST /ask")
+    search_span = next(s for s in got if s.name == "POST /search")
+    assert len({s.context.trace_id for s in got}) == 1, "phải cùng một trace"
+    assert search_span.context.trace_id == ask_span.context.trace_id
+    ids = {s.context.span_id for s in got}
+    assert search_span.parent and search_span.parent.span_id in ids   # /search nằm dưới /ask, không phải trace mới
+    recs = [r.log_record for r in logs.get_finished_logs()]
+    assert any("search k=3" in str(r.body) and r.trace_id == ask_span.context.trace_id for r in recs), [str(r.body) for r in recs]
+    m = generate_latest().decode()
+    assert 'legal_search_stage_seconds_count{stage="embed"}' in m and 'legal_ask_total{result="ok"}' in m
+    assert 'legal_http_request_seconds_count{method="POST",route="/ask",status="200"}' in m
+    print(f"✓ telemetry: {len(got)} span cùng 1 trace (/ask → n8n → /search → embed/qdrant/rerank), log có trace_id, metrics có số liệu")
 
 
 if __name__ == "__main__":

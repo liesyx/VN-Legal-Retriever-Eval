@@ -67,6 +67,7 @@ pipeline {
           steps {
             sh '''
               helm lint $CHART_DIR --set image.tag=lint
+              helm lint helm/observability
               tar -c Dockerfile $CHART_DIR | $TRIVY_RUN -i --entrypoint sh $TRIVY -c \
                 'mkdir /tmp/src && tar -x -C /tmp/src &&
                  trivy config --quiet --exit-code '"$SCAN_EXIT"' --severity HIGH,CRITICAL --helm-set image.tag=scan /tmp/src'

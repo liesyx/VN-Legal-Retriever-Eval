@@ -1,0 +1,40 @@
+# Cài 1 lần bằng tài khoản admin cụm (cần ClusterRole cho Prometheus, SA của Jenkins không tạo được):
+#   kubectl create ns observability
+#   kubectl -n observability create secret generic grafana-admin --from-literal=admin-user=admin --from-literal=admin-password='<mật khẩu>'
+#   helm upgrade --install obs helm/observability -n observability
+# Máy 2 CPU: requests CPU để rất nhỏ (request = giữ chỗ, API đã giữ 500m); limits cho phép dùng thêm khi rảnh.
+
+storageClass: local-path
+
+jaeger:
+  image: jaegertracing/jaeger:2.5.0      # all-in-one, lưu trace trong RAM (restart là mất — đủ cho dev)
+  uiNodePort: 30084                      # Coolify: jaeger.oci.lexsy.pro.vn -> http://10.0.0.47:30084 (UI không có đăng nhập)
+  resources:
+    requests: { cpu: 25m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 768Mi }
+
+prometheus:
+  image: prom/prometheus:v3.5.0
+  retention: 7d
+  storage: 5Gi
+  scrapeInterval: 30s
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 1Gi }
+
+loki:
+  image: grafana/loki:3.5.0
+  retention: 168h                        # 7 ngày
+  storage: 5Gi
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits: { cpu: 500m, memory: 768Mi }
+
+grafana:
+  image: grafana/grafana:12.0.2
+  nodePort: 30083                        # Coolify: grafana.oci.lexsy.pro.vn -> http://10.0.0.47:30083
+  rootUrl: https://grafana.oci.lexsy.pro.vn
+  adminSecret: grafana-admin             # key admin-user, admin-password (tạo tay, không nằm trong git)
+  resources:
+    requests: { cpu: 25m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }

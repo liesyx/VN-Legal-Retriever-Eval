@@ -9,7 +9,8 @@ pipeline/     build dữ liệu: dựng BM25, đẩy collection phapdien_vN lên
 prod/         API FastAPI chạy trong pod (chỉ đọc Qdrant)
 tests/        test với dữ liệu giả, Qdrant trong bộ nhớ (Jenkins chạy)
 web/          giao diện người dùng (HTML/CSS/JS thuần, busybox httpd), gọi backend /ask
-helm/ Dockerfile Jenkinsfile   CI/CD lên k3s
+helm/legal-rag  Dockerfile Jenkinsfile   CI/CD lên k3s
+helm/observability   Jaeger · Prometheus · Loki · Grafana (cài tay 1 lần)
 ```
 
 Luồng người dùng: trình duyệt (`legal.oci.lexsy.pro.vn`, pod web NodePort 30082) → backend `legal-api…/ask` (NodePort 30081) → n8n (LLM viết lại câu hỏi)
@@ -74,3 +75,30 @@ python -m tests.test_all <INDEX_DIR>  # dữ liệu thật
   điểm đúng bằng BM25 của benchmark. Bảng từ (từ → số) cần cho phía câu hỏi.
 - Điều dài hơn 20.000 ký tự: Qdrant chỉ lưu tiêu đề + độ dài; API trả tiêu đề + chunk khớp nhất.
 - nDCG@10 benchmark: hybrid 0,428; hybrid + rerank tiêu đề 0,475 (tiêu đề do biên tập viên viết — cận trên).
+
+## Quan sát (trace · log · metrics)
+```
+API ──OTLP trace──> Jaeger  (jaeger.observability:4318, lưu RAM)
+    ──OTLP log────> Loki    (loki.observability:3100/otlp, kèm trace_id, giữ 7 ngày)
+    <──scrape :9100─ Prometheus (+ CPU/RAM mọi container qua cAdvisor, giữ 7 ngày)
+Grafana: dashboard "legal-rag API" · log -> bấm TraceID mở trace · trace -> "Logs for this span"
+Một câu hỏi = 1 trace: POST /ask -> n8n -> POST /search -> search > embed · qdrant_query · fuse · qdrant_payload (· rerank)
+```
+Cài 1 lần (tài khoản admin cụm — chart có ClusterRole cho Prometheus):
+```bash
+kubectl create ns observability
+kubectl -n observability create secret generic grafana-admin \
+  --from-literal=admin-user=admin --from-literal=admin-password='<mật khẩu>'
+helm upgrade --install obs helm/observability -n observability
+kubectl -n observability get pods     # jaeger, prometheus, loki, grafana
+```
+Route Coolify: `grafana.oci.lexsy.pro.vn -> http://10.0.0.47:30083`, `jaeger.oci.lexsy.pro.vn -> http://10.0.0.47:30084`
+(Jaeger UI không có đăng nhập — có thể bỏ route này, xem trace ngay trong Grafana › Explore › Jaeger).
+
+API bật/tắt ở `values.yaml › observability.enabled` (Jenkins deploy như cũ). Chưa cài chart observability thì API vẫn chạy, chỉ ghi cảnh báo không gửi được.
+n8n: node "Tìm Điều luật" gửi lại header `traceparent` nhận từ webhook để /search nằm chung trace với /ask.
+
+Metrics của API: `legal_http_request_seconds{route,status}`, `legal_search_stage_seconds{stage}`, `legal_ask_total{result}`,
+`legal_n8n_seconds`, `legal_info{collection,rerank,version}`.
+Tài nguyên: requests tổng ~150m CPU / ~700Mi RAM (máy 2 CPU); limits cho phép dùng thêm khi rảnh. Chỉ log của API vào Loki
+(log pod khác: `kubectl logs`). Trace lưu RAM nên mất khi Jaeger restart.

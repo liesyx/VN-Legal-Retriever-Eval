@@ -5,6 +5,7 @@ import logging
 import time
 
 from legal_core.search import Config, Searcher, SparseQuery, encode_query, fuse, load_embedder, load_reranker, qdrant_client
+from prod.telemetry import stage
 
 log = logging.getLogger("legal_rag")
 PAYLOAD = ["key", "embed_text", "body", "citation", "title", "effective_date", "article_text", "article_len"]
@@ -24,24 +25,43 @@ class QdrantRetriever(Searcher):
             raise RuntimeError(f"{vocab_path} thuộc '{self.sparse.collection}', không phải '{collection}'")
         self.embedder = embedder or load_embedder(cfg.emb_model, cfg.device)
         self.reranker = reranker or (load_reranker(cfg.rerank_model, cfg.device) if cfg.depth else None)
+        if self.reranker is not None:
+            self.reranker = _TracedReranker(self.reranker)
         log.info("Sẵn sàng: %s, rerank=%s (%.0fs)", collection, self.reranker is not None, time.time() - t0)
 
     def _hybrid(self, question):
         m, n = self.m, self.cfg.topn
-        qi, qv = self.sparse.encode(question)
-        reqs = [m.QueryRequest(query=encode_query(self.embedder, question).tolist(), using="dense", limit=n,
-                               params=m.SearchParams(exact=True))]
+        with stage("embed"):
+            dense = encode_query(self.embedder, question).tolist()
+            qi, qv = self.sparse.encode(question)
+        reqs = [m.QueryRequest(query=dense, using="dense", limit=n, params=m.SearchParams(exact=True))]
         if len(qi):                                   # câu hỏi toàn từ lạ -> bỏ nhánh BM25
             reqs.append(m.QueryRequest(query=m.SparseVector(indices=qi.tolist(), values=qv.tolist()), using="bm25", limit=n))
-        run = [([p.id for p in r.points], [p.score for p in r.points]) for r in self.client.query_batch_points(self.collection, requests=reqs)]
-        run += [([], [])]
-        return fuse(*run[0], *run[1], self.cfg)
+        with stage("qdrant_query", collection=self.collection, bm25_terms=len(qi)):
+            res = self.client.query_batch_points(self.collection, requests=reqs)
+        run = [([p.id for p in r.points], [p.score for p in r.points]) for r in res] + [([], [])]
+        with stage("fuse"):
+            return fuse(*run[0], *run[1], self.cfg)
 
     def _payload(self, ids):
         out = {}
-        for r in (self.client.retrieve(self.collection, ids, with_payload=PAYLOAD) if ids else []):
+        if not ids:
+            return out
+        with stage("qdrant_payload", n=len(ids)):
+            recs = self.client.retrieve(self.collection, ids, with_payload=PAYLOAD)
+        for r in recs:
             p = r.payload
             out[int(r.id)] = dict(embed_text=p["embed_text"], body=p["body"], key=p["key"],
                                   article=dict(citation=p["citation"], title=p["title"], effective_date=p.get("effective_date"),
                                                text=p["article_text"], len=p.get("article_len")))
         return out
+
+
+class _TracedReranker:
+    """Bọc reranker để mỗi lần chấm điểm có span "rerank" + thời gian trong Prometheus."""
+    def __init__(self, inner):
+        self.inner = inner
+
+    def predict(self, pairs, **kw):
+        with stage("rerank", pairs=len(pairs)):
+            return self.inner.predict(pairs, **kw)
