@@ -1,0 +1,108 @@
+{{- if not .Values.image.tag }}{{ fail "image.tag là bắt buộc (Jenkins truyền --set image.tag=...)" }}{{ end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "legal-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+spec:
+  replicas: {{ .Values.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }   # pod mới sẵn sàng rồi mới tắt pod cũ
+  selector:
+    matchLabels:
+      {{- include "legal-rag.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "legal-rag.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: fetch-artifacts           # tải model + bảng từ từ MinIO vào emptyDir (image app không chứa model)
+          image: {{ .Values.fetchImage }}
+          command: ["sh", "-ec"]
+          args:
+            - |
+              rclone copy --stats-one-line "s3:$S3_BUCKET/{{ .Values.model.embedding }}" /models/embedding
+              {{- if .Values.rerank.enabled }}
+              rclone copy --stats-one-line "s3:$S3_BUCKET/{{ .Values.model.reranker }}" /models/reranker
+              {{- end }}
+              rclone copyto "s3:$S3_BUCKET/data/phapdien_{{ .Values.data.version }}/bm25_vocab.json.gz" /models/bm25_vocab.json.gz
+              test -s /models/bm25_vocab.json.gz && test -n "$(ls /models/embedding)"
+          env:
+            - { name: S3_BUCKET, value: {{ .Values.s3.bucket | quote }} }
+            - { name: HOME, value: /tmp }
+            - { name: RCLONE_CONFIG_S3_TYPE, value: s3 }
+            - { name: RCLONE_CONFIG_S3_PROVIDER, value: Minio }
+            - { name: RCLONE_CONFIG_S3_ENDPOINT, value: {{ .Values.s3.endpoint | quote }} }
+            - name: RCLONE_CONFIG_S3_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: S3_ACCESS_KEY } }
+            - name: RCLONE_CONFIG_S3_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: S3_SECRET_KEY } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          volumeMounts:
+            - { name: models, mountPath: /models }
+            - { name: tmp, mountPath: /tmp }
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8000 }
+          env:
+            - { name: QDRANT_URL, value: {{ .Values.qdrant.url | quote }} }
+            - { name: QDRANT_COLLECTION, value: "phapdien_{{ .Values.data.version }}" }
+            - { name: BM25_VOCAB, value: /models/bm25_vocab.json.gz }
+            - { name: EMB_MODEL, value: /models/embedding }
+            - { name: RERANK_MODEL, value: /models/reranker }
+            - { name: RERANK, value: {{ ternary "1" "0" .Values.rerank.enabled | quote }} }
+            - { name: DEVICE, value: cpu }
+            - name: QDRANT_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: QDRANT_API_KEY } }
+            - name: API_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: API_TOKEN } }
+          startupProbe:          # nạp model trên CPU mất 30–90 s
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: models, mountPath: /models, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: models
+          emptyDir: { sizeLimit: {{ ternary "6Gi" "3Gi" .Values.rerank.enabled }} }
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }

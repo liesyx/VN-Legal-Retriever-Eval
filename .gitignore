@@ -1,0 +1,6 @@
+__pycache__/
+.env
+*.npy
+*.parquet
+bm25_vocab*.json.gz
+trivy-*.json

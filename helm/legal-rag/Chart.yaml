@@ -1,0 +1,6 @@
+apiVersion: v2
+name: legal-rag
+description: API tìm Điều luật (hybrid dense + BM25 trên Qdrant) cho n8n
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

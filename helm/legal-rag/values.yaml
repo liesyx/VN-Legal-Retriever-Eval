@@ -1,0 +1,43 @@
+# Jenkins truyền image.tag; giá trị khác sửa ở đây rồi push
+image:
+  repository: harbor.oci.lexsy.pro.vn/legal-rag/api
+  tag: ""
+imagePullSecrets:
+  - name: harbor-pull
+
+replicas: 1
+
+# Phiên bản dữ liệu: collection phapdien_<version> trên Qdrant + bảng từ s3://<bucket>/data/phapdien_<version>/bm25_vocab.json.gz
+# Lên bản dữ liệu mới / quay lại = đổi dòng này, commit -> pipeline deploy (hoặc helm rollback).
+data:
+  version: v1
+
+# Model trên MinIO
+model:
+  embedding: models/vietnamese-embedding/main
+  reranker: models/vietnamese-reranker/main   # chỉ tải khi rerank.enabled
+
+rerank:
+  enabled: false        # true: +~2,3 GB RAM, chậm hơn nhiều trên CPU
+
+qdrant:
+  url: https://qdrant.oci.lexsy.pro.vn
+
+s3:
+  endpoint: https://s3.oci.lexsy.pro.vn
+  bucket: legal-rag
+
+# Secret tạo tay 1 lần (không nằm trong git/Jenkins), cần các key:
+#   QDRANT_API_KEY (key chỉ đọc), API_TOKEN, S3_ACCESS_KEY, S3_SECRET_KEY (user MinIO chỉ đọc bucket)
+existingSecret: legal-rag-secrets
+
+# initContainer tải model + bảng từ từ MinIO
+fetchImage: rclone/rclone:1.68.2
+
+resources:
+  requests: { cpu: "1", memory: 3Gi }
+  limits: { cpu: "2", memory: 4Gi }
+
+# Cụm tắt Traefik: Coolify proxy (HTTPS, domain) -> http://<IP node>:<nodePort> -> pod
+service:
+  nodePort: 30081

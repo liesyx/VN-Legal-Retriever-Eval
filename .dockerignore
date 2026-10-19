@@ -1,0 +1,7 @@
+**
+!legal_core/**
+!prod/**
+!pipeline/**
+!tests/**
+**/__pycache__
+**/.env
