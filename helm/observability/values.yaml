@@ -1,7 +1,7 @@
-# Cài 1 lần bằng tài khoản admin cụm (cần ClusterRole cho Prometheus, SA của Jenkins không tạo được):
-#   kubectl create ns observability
+# Jenkins deploy chart này (release obs, namespace observability) cùng lúc với legal-rag.
+# Admin cụm làm 1 lần trước:
+#   kubectl apply -f helm/observability/cluster-rbac.yaml     # namespace + quyền Jenkins + ClusterRole Prometheus
 #   kubectl -n observability create secret generic grafana-admin --from-literal=admin-user=admin --from-literal=admin-password='<mật khẩu>'
-#   helm upgrade --install obs helm/observability -n observability
 # Máy 2 CPU: requests CPU để rất nhỏ (request = giữ chỗ, API đã giữ 500m); limits cho phép dùng thêm khi rảnh.
 
 storageClass: local-path
@@ -18,6 +18,8 @@ prometheus:
   retention: 7d
   storage: 5Gi
   scrapeInterval: 30s
+  rbac:
+    create: false        # ClusterRole nằm trong cluster-rbac.yaml (Jenkins không có quyền cấp cụm); true nếu admin tự helm install
   resources:
     requests: { cpu: 50m, memory: 256Mi }
     limits: { cpu: 500m, memory: 1Gi }

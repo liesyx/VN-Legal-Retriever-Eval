@@ -1,8 +1,5 @@
-# Bản cố định — đổi bản thì đổi ở đây (CI build + test + quét lại). torch cài riêng bản CPU trong Dockerfile.
-torch==2.14.1
-sentence-transformers==6.1.0
-transformers==5.20.1
-numpy==2.5.4
+# Bản cố định — đổi bản thì đổi ở đây (CI build + test + quét lại). Thư viện nặng ở requirements-ml.txt.
+-r requirements-ml.txt
 qdrant-client==1.19.1
 fastapi==0.146.0
 uvicorn==0.54.0

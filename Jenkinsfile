@@ -9,6 +9,8 @@ pipeline {
     NAMESPACE  = 'legal-rag'
     RELEASE    = 'legal-rag'
     CHART_DIR  = 'helm/legal-rag'
+    OBS_RELEASE   = 'obs'
+    OBS_NAMESPACE = 'observability'
 
     // Ảnh công cụ: nên mirror vào Harbor (proxy cache) rồi ghim @sha256 — xem README
     GITLEAKS = 'zricethezav/gitleaks:v8.21.2'
@@ -123,6 +125,22 @@ pipeline {
             docker push $WEB_IMAGE:$IMAGE_TAG
             docker logout $REGISTRY
           '''
+        }
+      }
+    }
+
+    stage('Deploy observability') {
+      // Jaeger · Prometheus · Loki · Grafana (namespace observability). Chart không đổi -> helm gần như không làm gì.
+      // Lỗi ở đây chỉ đánh dấu UNSTABLE, không chặn deploy API.
+      when { expression { env.IS_MAIN == 'true' } }
+      steps {
+        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+          withCredentials([file(credentialsId: 'kubeconfig-k3s', variable: 'KUBECONFIG')]) {
+            sh '''
+              helm upgrade --install $OBS_RELEASE helm/observability \
+                --namespace $OBS_NAMESPACE --atomic --wait --timeout 5m --history-max 5
+            '''
+          }
         }
       }
     }

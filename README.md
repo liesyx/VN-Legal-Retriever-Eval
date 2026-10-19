@@ -84,13 +84,13 @@ API ──OTLP trace──> Jaeger  (jaeger.observability:4318, lưu RAM)
 Grafana: dashboard "legal-rag API" · log -> bấm TraceID mở trace · trace -> "Logs for this span"
 Một câu hỏi = 1 trace: POST /ask -> n8n -> POST /search -> search > embed · qdrant_query · fuse · qdrant_payload (· rerank)
 ```
-Cài 1 lần (tài khoản admin cụm — chart có ClusterRole cho Prometheus):
+Jenkins deploy chart này (stage "Deploy observability", release `obs`) ngay trước API. Admin cụm làm 1 lần trước
+(ClusterRole cho Prometheus là quyền cấp cụm, SA Jenkins chỉ có quyền trong namespace):
 ```bash
-kubectl create ns observability
+kubectl apply -f helm/observability/cluster-rbac.yaml   # ns observability + RoleBinding admin cho demo:jenkins-deployer + ClusterRole Prometheus
 kubectl -n observability create secret generic grafana-admin \
   --from-literal=admin-user=admin --from-literal=admin-password='<mật khẩu>'
-helm upgrade --install obs helm/observability -n observability
-kubectl -n observability get pods     # jaeger, prometheus, loki, grafana
+kubectl auth can-i create deployments -n observability --as=system:serviceaccount:demo:jenkins-deployer   # yes
 ```
 Route Coolify: `grafana.oci.lexsy.pro.vn -> http://10.0.0.47:30083`, `jaeger.oci.lexsy.pro.vn -> http://10.0.0.47:30084`
 (Jaeger UI không có đăng nhập — có thể bỏ route này, xem trace ngay trong Grafana › Explore › Jaeger).

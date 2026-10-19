@@ -1,0 +1,6 @@
+# Thư viện nặng (torch ~1 GB khi cài): layer riêng trong Dockerfile, chỉ đổi khi sửa file này
+# -> sửa requirements.txt (thư viện nhẹ) không phải build/push lại torch. torch cài riêng bản CPU.
+torch==2.14.1
+sentence-transformers==6.1.0
+transformers==5.20.1
+numpy==2.5.4
