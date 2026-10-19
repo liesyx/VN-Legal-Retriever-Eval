@@ -35,7 +35,7 @@ existingSecret: legal-rag-secrets
 fetchImage: rclone/rclone:1.68.2
 
 resources:
-  requests: { cpu: "1", memory: 3Gi }
+  requests: { cpu: "500m", memory: 3Gi }
   limits: { cpu: "2", memory: 4Gi }
 
 # Cụm tắt Traefik: Coolify proxy (HTTPS, domain) -> http://<IP node>:<nodePort> -> pod
