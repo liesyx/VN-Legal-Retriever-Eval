@@ -112,7 +112,26 @@ def main(index_dir):
         assert all(s["text"] and len(s["text"]) <= 320 for s in js["sources"])
         assert c.post("/search", headers=h, json={"question": "hi"}).status_code == 422
         assert c.get("/health").json() == {"ok": True, "collection": name, "rerank": True}
-    print("✓ API")
+
+        # /ask: chuyển nguyên câu hỏi sang n8n, trả nguyên kết quả; giới hạn số lần hỏi theo IP
+        import httpx
+        seen = []
+        def n8n(req):
+            seen.append(req)
+            return httpx.Response(200, json={"ok": True, "answer": "Trả lời [1]", "sources": []})
+        api.STATE["http"] = httpx.AsyncClient(transport=httpx.MockTransport(n8n))
+        os.environ.update(N8N_WEBHOOK_URL="https://n8n.test/webhook/legal-ask", ASK_PER_MINUTE="2")
+        api.HITS.clear()
+        ip = {"X-Forwarded-For": "1.2.3.4, 10.0.0.1"}
+        r = c.post("/ask", headers=ip, json={"question": "Ly hôn thì ai nuôi con?", "k": 5})
+        assert r.status_code == 200 and r.json()["answer"] == "Trả lời [1]"
+        assert str(seen[0].url) == "https://n8n.test/webhook/legal-ask" and b"Ly h" in seen[0].content
+        assert c.post("/ask", headers=ip, json={"question": "Câu hỏi thứ hai", "k": 5}).status_code == 200
+        assert c.post("/ask", headers=ip, json={"question": "Câu hỏi thứ ba", "k": 5}).status_code == 429
+        assert c.post("/ask", headers={"X-Forwarded-For": "5.6.7.8"}, json={"question": "IP khác vẫn hỏi được"}).status_code == 200
+        api.STATE["http"] = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(500)))
+        assert c.post("/ask", headers={"X-Forwarded-For": "9.9.9.9"}, json={"question": "n8n đang lỗi thì sao"}).status_code == 502
+    print("✓ API (/search, /ask, giới hạn theo IP)")
     print("ALL OK")
 
 

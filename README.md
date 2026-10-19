@@ -8,11 +8,16 @@ legal_core/   thuật toán dùng chung (tách từ, trộn điểm, Config)
 pipeline/     build dữ liệu: dựng BM25, đẩy collection phapdien_vN lên Qdrant (chạy local/Colab)
 prod/         API FastAPI chạy trong pod (chỉ đọc Qdrant)
 tests/        test với dữ liệu giả, Qdrant trong bộ nhớ (Jenkins chạy)
+web/          giao diện người dùng (HTML/CSS/JS thuần, static site trên Coolify), gọi backend /ask
 helm/ Dockerfile Jenkinsfile   CI/CD lên k3s
 ```
 
+Luồng người dùng: trình duyệt (`legal.oci.lexsy.pro.vn`, static trên Coolify) → backend `legal-api…/ask` → n8n (LLM viết lại câu hỏi)
+→ API `/search` (NodePort 30081) → Qdrant → n8n (LLM trả lời có trích dẫn) → trình duyệt.
+
 ## API
 ```
+POST /ask      (giao diện web, CORS + giới hạn 10 câu/phút/IP) {"question", "k"} -> chuyển sang n8n, trả nguyên kết quả
 POST /search   header X-API-Key   {"question": "...", "rerank_query": "...", "k": 8, "max_chars": 2500}
   -> {"rerank_query", "sources": [{"n", "key", "citation", "title", "effective_date", "text"}], "timings_ms"}
 GET  /health   -> {"ok": true, "collection": "phapdien_v1", "rerank": false}

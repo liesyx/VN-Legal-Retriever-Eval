@@ -16,6 +16,9 @@ pipeline {
     TRIVY    = 'aquasec/trivy:0.57.1'
     TRIVY_RUN = 'docker run --rm -v trivy-cache:/root/.cache'   // cache CSDL lỗ hổng trong volume của DinD
 
+    // 1 = lỗi quét làm hỏng build (prod) · 0 = chỉ báo cáo (dev)
+    SCAN_EXIT = '0'
+
     DOCKER_BUILDKIT = '1'
   }
 
@@ -47,7 +50,7 @@ pipeline {
             sh '''
               tar -c . | docker run --rm -i --entrypoint sh $GITLEAKS -c \
                 'mkdir /tmp/src && tar -x -C /tmp/src && cd /tmp/src &&
-                 gitleaks git . --redact --no-banner --exit-code 0'
+                 gitleaks git . --redact --no-banner --verbose --exit-code '"$SCAN_EXIT"
             '''
           }
         }
@@ -62,7 +65,7 @@ pipeline {
               helm lint $CHART_DIR --set image.tag=lint
               tar -c Dockerfile $CHART_DIR | $TRIVY_RUN -i --entrypoint sh $TRIVY -c \
                 'mkdir /tmp/src && tar -x -C /tmp/src &&
-                 trivy config --quiet --exit-code 0 --severity HIGH,CRITICAL --helm-set image.tag=scan /tmp/src'
+                 trivy config --quiet --exit-code '"$SCAN_EXIT"' --severity HIGH,CRITICAL --helm-set image.tag=scan /tmp/src'
             '''
           }
         }
@@ -94,7 +97,7 @@ pipeline {
           $TRIVY_RUN -v /var/run/docker.sock:/var/run/docker.sock $TRIVY image --quiet \
             --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --format table $IMAGE:$IMAGE_TAG
           $TRIVY_RUN -v /var/run/docker.sock:/var/run/docker.sock $TRIVY image --quiet \
-            --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 0 $IMAGE:$IMAGE_TAG
+            --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code $SCAN_EXIT $IMAGE:$IMAGE_TAG
           $TRIVY_RUN -v /var/run/docker.sock:/var/run/docker.sock $TRIVY image --quiet \
             --format cyclonedx $IMAGE:$IMAGE_TAG > sbom.cdx.json
         '''

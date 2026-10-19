@@ -77,6 +77,9 @@ spec:
             - { name: RERANK_MODEL, value: /models/reranker }
             - { name: RERANK, value: {{ ternary "1" "0" .Values.rerank.enabled | quote }} }
             - { name: DEVICE, value: cpu }
+            - { name: N8N_WEBHOOK_URL, value: {{ .Values.ask.n8nWebhook | quote }} }
+            - { name: ALLOWED_ORIGINS, value: {{ .Values.ask.allowedOrigins | quote }} }
+            - { name: ASK_PER_MINUTE, value: {{ .Values.ask.perMinute | quote }} }
             - name: QDRANT_API_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: QDRANT_API_KEY } }
             - name: API_TOKEN
