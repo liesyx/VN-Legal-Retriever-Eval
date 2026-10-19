@@ -8,11 +8,11 @@ legal_core/   thuật toán dùng chung (tách từ, trộn điểm, Config)
 pipeline/     build dữ liệu: dựng BM25, đẩy collection phapdien_vN lên Qdrant (chạy local/Colab)
 prod/         API FastAPI chạy trong pod (chỉ đọc Qdrant)
 tests/        test với dữ liệu giả, Qdrant trong bộ nhớ (Jenkins chạy)
-web/          giao diện người dùng (HTML/CSS/JS thuần, static site trên Coolify), gọi backend /ask
+web/          giao diện người dùng (HTML/CSS/JS thuần, busybox httpd), gọi backend /ask
 helm/ Dockerfile Jenkinsfile   CI/CD lên k3s
 ```
 
-Luồng người dùng: trình duyệt (`legal.oci.lexsy.pro.vn`, static trên Coolify) → backend `legal-api…/ask` → n8n (LLM viết lại câu hỏi)
+Luồng người dùng: trình duyệt (`legal.oci.lexsy.pro.vn`, pod web NodePort 30082) → backend `legal-api…/ask` (NodePort 30081) → n8n (LLM viết lại câu hỏi)
 → API `/search` (NodePort 30081) → Qdrant → n8n (LLM trả lời có trích dẫn) → trình duyệt.
 
 ## API

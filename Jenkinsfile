@@ -35,6 +35,7 @@ pipeline {
         checkout scm
         script {
           env.IMAGE     = "${env.REGISTRY}/${env.IMAGE_NAME}"
+          env.WEB_IMAGE = "${env.REGISTRY}/legal-rag/web"
           env.IMAGE_TAG = "${env.BUILD_NUMBER}-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
           env.IS_MAIN   = (env.BRANCH_NAME == 'main' || env.GIT_BRANCH in ['main', 'origin/main']).toString()
         }
@@ -56,7 +57,10 @@ pipeline {
         }
         stage('Dockerfile (hadolint)') {
           steps {
-            sh 'docker run --rm -i $HADOLINT hadolint --failure-threshold warning - < Dockerfile'
+            sh '''
+              docker run --rm -i $HADOLINT hadolint --failure-threshold warning - < Dockerfile
+              docker run --rm -i $HADOLINT hadolint --failure-threshold warning - < web/Dockerfile
+            '''
           }
         }
         stage('Helm + misconfig (trivy config)') {
@@ -86,6 +90,7 @@ pipeline {
             --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
             --label org.opencontainers.image.version=$IMAGE_TAG \
             -t $IMAGE:$IMAGE_TAG .
+          docker build -t $WEB_IMAGE:$IMAGE_TAG web
         '''
       }
     }
@@ -100,6 +105,8 @@ pipeline {
             --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code $SCAN_EXIT $IMAGE:$IMAGE_TAG
           $TRIVY_RUN -v /var/run/docker.sock:/var/run/docker.sock $TRIVY image --quiet \
             --format cyclonedx $IMAGE:$IMAGE_TAG > sbom.cdx.json
+          $TRIVY_RUN -v /var/run/docker.sock:/var/run/docker.sock $TRIVY image --quiet \
+            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code $SCAN_EXIT $WEB_IMAGE:$IMAGE_TAG
         '''
       }
       post { always { archiveArtifacts artifacts: 'sbom.cdx.json', allowEmptyArchive: true } }
@@ -112,6 +119,7 @@ pipeline {
           sh '''
             echo "$REG_PASS" | docker login $REGISTRY -u "$REG_USER" --password-stdin
             docker push $IMAGE:$IMAGE_TAG
+            docker push $WEB_IMAGE:$IMAGE_TAG
             docker logout $REGISTRY
           '''
         }
@@ -136,7 +144,7 @@ pipeline {
 
   post {
     always {
-      sh 'docker rmi $IMAGE:test-$IMAGE_TAG $IMAGE:$IMAGE_TAG 2>/dev/null || true; docker image prune -f >/dev/null 2>&1 || true'
+      sh 'docker rmi $IMAGE:test-$IMAGE_TAG $IMAGE:$IMAGE_TAG $WEB_IMAGE:$IMAGE_TAG 2>/dev/null || true; docker image prune -f >/dev/null 2>&1 || true'
     }
     success { echo "✅ ${env.IMAGE}:${env.IMAGE_TAG}" }
     failure { echo '❌ Lỗi. Nếu hỏng ở bước deploy, --atomic đã tự rollback về bản trước.' }

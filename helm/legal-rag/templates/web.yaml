@@ -1,0 +1,47 @@
+{{- if .Values.web.enabled }}
+# Giao diện web (trang tĩnh). Coolify route legal.oci.lexsy.pro.vn -> http://<IP node>:<web.nodePort>
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: { app.kubernetes.io/name: legal-rag-web, app.kubernetes.io/instance: {{ .Release.Name }} }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: { app.kubernetes.io/name: legal-rag-web, app.kubernetes.io/instance: {{ .Release.Name }} }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: legal-rag-web, app.kubernetes.io/instance: {{ .Release.Name }} }
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: web
+          image: "{{ .Values.web.repository }}:{{ .Values.image.tag }}"
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /, port: http }, periodSeconds: 30 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: { app.kubernetes.io/name: legal-rag-web, app.kubernetes.io/instance: {{ .Release.Name }} }
+spec:
+  type: NodePort
+  selector: { app.kubernetes.io/name: legal-rag-web, app.kubernetes.io/instance: {{ .Release.Name }} }
+  ports:
+    - { name: http, port: 80, targetPort: http, nodePort: {{ .Values.web.nodePort }} }
+{{- end }}

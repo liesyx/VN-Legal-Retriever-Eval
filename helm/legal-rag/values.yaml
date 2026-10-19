@@ -47,3 +47,9 @@ ask:
   n8nWebhook: https://n8n.oci.lexsy.pro.vn/webhook/legal-ask
   allowedOrigins: https://legal.oci.lexsy.pro.vn,http://localhost:5500
   perMinute: 10
+
+# Giao diện web: Coolify route https://legal.oci.lexsy.pro.vn -> http://10.0.0.47:30082
+web:
+  enabled: true
+  repository: harbor.oci.lexsy.pro.vn/legal-rag/web    # Jenkins build cùng tag với image API
+  nodePort: 30082
