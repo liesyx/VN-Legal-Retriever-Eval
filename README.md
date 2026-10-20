@@ -68,34 +68,75 @@ The project is built as an **MLOps system**, not just an app: every data or mode
 
 **Project Structure**
 ```txt
-  ├── legal_core                         /* Retrieval algorithm shared by production and build: text normalisation, fusion, Config */
-  ├── pipeline                           /* Build side: structure-aware chunker, GPU embedding, BM25, publish to Qdrant */
-  │    ├── chunker.py                    /* Article -> Clause -> Point -> sentence chunking, ≤ 512 tokens */
-  │    ├── embed.py                      /* Multi-GPU embedding with resumable shards */
-  │    └── publish_qdrant.py             /* Push one data version as collection phapdien_vN + export the BM25 vocabulary */
-  ├── prod                               /* Serving side */
-  │    ├── app.py                        /* FastAPI: /ask, /search, /feedback, /health */
-  │    ├── qdrant_retriever.py           /* Hybrid query on Qdrant */
-  │    └── telemetry.py                  /* OpenTelemetry traces & logs, Prometheus metrics */
-  ├── mlops                              /* Evaluation, MLflow, quality gate, feedback */
-  │    ├── labels.py, golden.py          /* Build and load the golden set (silver labels from cited Articles) */
-  │    ├── evaluate.py                   /* check / run / promote — the quality gate */
-  │    ├── report.py                     /* One-page HTML report with charts, logged to MLflow */
-  │    ├── mlflow_rest.py                /* Minimal MLflow REST client (no mlflow package in the image) */
-  │    ├── feedback.py                   /* Collect thumbs-down questions from Loki, merge into a new golden set */
-  │    └── bench_lib.py, bench_*.py      /* Library, dashboard and MLflow logging for the benchmark notebook */
+  ├── legal_core                              /* Retrieval algorithm shared by production and build */
+  │    ├── search.py                          /* Config (α = 0.7, top-n, BM25 k1/b), hybrid fusion, rerank, merge chunks -> Articles */
+  │    ├── fusion.py                          /* Min-max normalisation (with floor) and weighted fusion */
+  │    └── text.py                            /* Text normalisation, syllables + bigrams, Article keys "số hiệu|Điều" */
+  ├── pipeline                                /* Build side (Kaggle / local) */
+  │    ├── chunker.py                         /* Article -> Clause -> Point -> sentence chunking, ≤ 512 tokens */
+  │    ├── embed.py                           /* Multi-GPU embedding with resumable shards -> chunks.parquet + embeddings.f16.npy */
+  │    ├── bm25.py                            /* BM25 on sparse matrices */
+  │    ├── index_data.py                      /* Load an index, build Article texts and the BM25 model */
+  │    ├── file_retriever.py                  /* Search directly on index files (evaluation, Qdrant == file checks) */
+  │    ├── publish_qdrant.py                  /* Push one data version as collection phapdien_vN + export the BM25 vocabulary */
+  │    ├── requirements.txt                   /* Build dependencies (pandas, pyarrow, scikit-learn, scipy) */
+  │    └── .env.example                       /* QDRANT_URL / QDRANT_API_KEY (write key, build machine only) */
+  ├── prod                                    /* Serving side (runs in the API pod) */
+  │    ├── app.py                             /* FastAPI: /ask (-> n8n), /search, /feedback, /health; rate limit, CORS */
+  │    ├── qdrant_retriever.py                /* Hybrid query on Qdrant (dense + sparse in one batch) */
+  │    ├── telemetry.py                       /* OpenTelemetry traces & logs, Prometheus metrics on port 9100 */
+  │    ├── requirements-ml.txt                /* Heavy layer: torch (CPU), sentence-transformers, transformers, numpy */
+  │    ├── requirements.txt                   /* Light layer: FastAPI, Qdrant client, OpenTelemetry, prometheus-client */
+  │    └── .env.example                       /* Environment variables of the API */
+  ├── mlops                                   /* Evaluation, MLflow, quality gate, feedback */
+  │    ├── labels.py                          /* Build silver labels from Articles cited in officers' answers */
+  │    ├── golden.py                          /* Load / export the golden set (golden_vK.jsonl.gz) */
+  │    ├── metrics.py                         /* nDCG@10, MRR, Hit@k, Recall@k, bootstrap CI */
+  │    ├── evaluate.py                        /* check / run / promote — the quality gate + experiments */
+  │    ├── report.py                          /* One-page HTML report with charts (report.html in MLflow) */
+  │    ├── mlflow_rest.py                     /* Minimal MLflow REST client (no mlflow package in the image) */
+  │    ├── feedback.py                        /* Collect thumbs-down questions from Loki, merge into a new golden set */
+  │    ├── bench_lib.py                       /* Benchmark library (TF-IDF, RRF, full metrics, Holm, randomization test) */
+  │    ├── bench_dashboard.py                 /* Self-contained benchmark dashboard (dashboard.html) */
+  │    └── bench_mlflow.py                    /* Log the benchmark to MLflow: parent run + one child run per method */
   ├── kaggle
-  │    ├── legal_rag_build.ipynb         /* Build index + golden set, evaluate, gate, publish */
-  │    └── legal_rag_benchmark.ipynb     /* Compare 8 retrieval methods, log to MLflow */
+  │    ├── legal_rag_build.ipynb              /* Build index + golden set, evaluate, gate, publish */
+  │    └── legal_rag_benchmark.ipynb          /* Compare 8 retrieval methods, log to MLflow */
   ├── helm
-  │    ├── legal-rag                     /* API + web + quality-gate Jobs (templates/eval-job.yaml) */
-  │    └── observability                 /* Jaeger, Loki, Prometheus, Grafana + cluster-rbac.yaml */
-  ├── web                                /* Web UI (index.html, app.js, styles.css) */
-  ├── tests/test_all.py                  /* Full test suite run by Jenkins (in-memory Qdrant, fake models, fake MLflow) */
-  ├── images                             /* Screenshots displayed in this README (01_… to 17_…) */
-  ├── docs/OPERATIONS.md                 /* Operator notes (Vietnamese) */
-  ├── Dockerfile                         /* Stages: base -> test -> runtime; torch layer separated from light deps */
-  └── Jenkinsfile                        /* CI/CD pipeline */
+  │    ├── legal-rag                          /* Chart of the application (namespace legal-rag) */
+  │    │    ├── Chart.yaml
+  │    │    ├── values.yaml                   /* data.version, rerank, model paths, quality gate, observability */
+  │    │    └── templates
+  │    │         ├── deployment.yaml          /* API pod: rclone initContainer (models from MinIO) + FastAPI */
+  │    │         ├── service.yaml             /* API NodePort 30081 */
+  │    │         ├── web.yaml                 /* Web UI Deployment + NodePort 30082 */
+  │    │         ├── eval-job.yaml            /* Quality gate: pre-upgrade eval Job + post-upgrade promote Job */
+  │    │         └── _helpers.tpl             /* Shared labels, fetch initContainer, retriever / quality env */
+  │    └── observability                      /* Chart of the observability stack (namespace observability) */
+  │         ├── Chart.yaml
+  │         ├── values.yaml                   /* Images, retention, storage, NodePorts (Grafana 30083, Jaeger 30084) */
+  │         ├── cluster-rbac.yaml             /* Applied once by a cluster admin: namespace, Jenkins RoleBinding, Prometheus ClusterRole */
+  │         ├── dashboards/legal-rag.json     /* Grafana dashboard "legal-rag API" */
+  │         └── templates
+  │              ├── jaeger.yaml              /* Jaeger all-in-one (OTLP 4318, UI 16686) */
+  │              ├── loki.yaml                /* Loki single binary, OTLP logs, 7-day retention */
+  │              ├── prometheus.yaml          /* Prometheus + RBAC, pod and cAdvisor scraping */
+  │              ├── grafana.yaml             /* Grafana with provisioned datasources and dashboard */
+  │              └── _config.tpl              /* Prometheus / Loki config, Grafana datasources (logs <-> traces links) */
+  ├── web                                     /* Web UI */
+  │    ├── index.html, app.js, styles.css     /* Chat page: answer with citations [n], cited Articles, 👍 / 👎 */
+  │    ├── httpd.conf                         /* MIME types for busybox httpd */
+  │    └── Dockerfile                         /* busybox httpd image */
+  ├── tests
+  │    ├── test_all.py                        /* Full test suite run by Jenkins */
+  │    ├── fixture.py                         /* Small fake index (90 Articles) in the notebook output format */
+  │    └── fake_mlflow.py                     /* In-memory MLflow for testing the gate flow */
+  ├── images                                  /* Screenshots displayed in this README + rename_images.ps1 */
+  ├── docs/OPERATIONS.md                      /* Operator notes (Vietnamese) */
+  ├── Dockerfile                              /* Stages: base -> test -> runtime; torch layer separated from light deps */
+  ├── Jenkinsfile                             /* CI/CD: checks -> test -> build -> scan -> push -> deploy */
+  ├── .dockerignore                           /* Only legal_core, prod, mlops, pipeline, tests go into the build context */
+  └── .gitignore
 ```
 
 ## II. Prepare the infrastructure
@@ -156,7 +197,7 @@ kubectl -n legal-rag run mlcheck --rm -it --restart=Never --image=curlimages/cur
 ```
 ![](images/08_mlflow_stack.png)
 *MLflow 3.17 on Coolify — experiments `legal-rag-retrieval` (gate) and `legal-rag-benchmark` (comparisons).*
-k8s:![](images/10_mlflow_run.png)
+
 #### 4. Secrets
 Secrets are created by hand and never stored in git or Jenkins:
 ```bash
@@ -215,7 +256,7 @@ Run it with **Save Version → Save & Run All** so the output (index + golden se
 ![](images/09_kaggle_report.png)
 *The report shown in the notebook (and saved to MLflow as `report.html`): score vs. thresholds, hits in top-k, rank of the first correct Article, score per legal domain.*
 
-
+![](images/10_mlflow_run.png)
 *The run in MLflow: 29 metrics, 13 parameters, tags `fingerprint`, `gate`, `dataset_rev`, `model_rev`, `code_commit`.*
 
 #### 4. Benchmark 8 retrieval methods
