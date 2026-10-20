@@ -67,7 +67,7 @@ The project is built as an **MLOps system**, not just an app: every data or mode
 * Evaluation questions: [tmquan/pbgdpl-vn-legal-qna](https://huggingface.co/datasets/tmquan/pbgdpl-vn-legal-qna) — 4,593 real citizen questions answered by Ministry of Justice officers
 
 **Available at::**
-* Corpus: [https://legal.oci.lexsy.pro.vn/](https://legal.oci.lexsy.pro.vn/) — the Vietnamese Legal web
+* Site: [https://legal.oci.lexsy.pro.vn/](https://legal.oci.lexsy.pro.vn/) — the Vietnamese Legal RAG Retriever
 
 
 **Project Structure**
