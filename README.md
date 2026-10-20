@@ -259,8 +259,8 @@ The production configuration (hybrid 0.7 · dense + 0.3 · BM25, no rerank) is s
 Run it with **Save Version → Save & Run All** so the output (index + golden set) is saved for the benchmark notebook.
 ![](images/09_kaggle_report.png)
 *The report shown in the notebook (and saved to MLflow as `report.html`): score vs. thresholds, hits in top-k, rank of the first correct Article, score per legal domain.*
-
 ![](images/10_mlflow_run.png)
+
 *The run in MLflow: 29 metrics, 13 parameters, tags `fingerprint`, `gate`, `dataset_rev`, `model_rev`, `code_commit`.*
 
 #### 4. Benchmark 8 retrieval methods
