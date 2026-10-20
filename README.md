@@ -38,7 +38,7 @@ Legal RAG answers legal questions from Vietnamese citizens and cites, for every 
 
 The project is built as an **MLOps system**, not just an app: every data or model version is built and scored reproducibly on Kaggle, tracked in MLflow, and **can only reach production through an automatic quality gate**. Production quality is then watched with traces, logs, metrics and user feedback, and the questions users reject flow back into the evaluation set.
 
-![architecture](images/1_architecture.png)
+![architecture](images/01_architecture.png)
 
 **Technology:**
 * Source control: Git/GitHub
@@ -92,7 +92,7 @@ The project is built as an **MLOps system**, not just an app: every data or mode
   │    └── observability                 /* Jaeger, Loki, Prometheus, Grafana + cluster-rbac.yaml */
   ├── web                                /* Web UI (index.html, app.js, styles.css) */
   ├── tests/test_all.py                  /* Full test suite run by Jenkins (in-memory Qdrant, fake models, fake MLflow) */
-  ├── images                             /* Images displayed in this README */
+  ├── images                             /* Screenshots displayed in this README (01_… to 17_…) */
   ├── docs/OPERATIONS.md                 /* Operator notes (Vietnamese) */
   ├── Dockerfile                         /* Stages: base -> test -> runtime; torch layer separated from light deps */
   └── Jenkinsfile                        /* CI/CD pipeline */
@@ -112,7 +112,6 @@ The observability namespace also needs one cluster-level permission (Prometheus 
 kubectl apply -f helm/observability/cluster-rbac.yaml
 kubectl auth can-i create deployments -n observability --as=system:serviceaccount:demo:jenkins-deployer   # yes
 ```
-![](images/2_k3s_namespaces.png)
 
 #### 2. Services on Coolify (Qdrant, MinIO, n8n, Harbor, Jenkins)
 | Service | Used for |
@@ -122,6 +121,18 @@ kubectl auth can-i create deployments -n observability --as=system:serviceaccoun
 | n8n | workflow `legal-ask` (LLM rewrite → `/search` → LLM answer) |
 | Harbor | project `legal-rag`, images `api` and `web`, robot account for Jenkins |
 | Jenkins | Multibranch Pipeline connected to GitHub |
+
+![](images/02_minio.png)
+*MinIO bucket `legal-rag`: models, BM25 vocabularies per data version, golden sets.*
+
+![](images/03_qdrant_collections.png)
+*Qdrant: one immutable collection per data version (`phapdien_v1`, `phapdien_v2`…).*
+
+![](images/04_qdrant_collection.png)
+*A collection holds a dense vector (1024 dims) and a sparse `bm25` vector per chunk, plus the Article payload.*
+
+![](images/05_qdrant_visualize.png)
+*Qdrant's visualisation of the chunk embeddings, coloured by legal topic.*
 
 Upload the embedding model to MinIO once; the API pod downloads it at startup with an `rclone` initContainer, so the image stays small and a data change never needs an image rebuild.
 
@@ -143,7 +154,8 @@ kubectl -n legal-rag run mlcheck --rm -it --restart=Never --image=curlimages/cur
   curl -s -u admin:'<password>' -X POST https://mlflow.oci.lexsy.pro.vn/api/2.0/mlflow/experiments/search \
   -H 'Content-Type: application/json' -d '{"max_results":1}'
 ```
-![](images/3_mlflow_stack.png)
+![](images/08_mlflow_stack.png)
+*MLflow 3.17 on Coolify — experiments `legal-rag-retrieval` (gate) and `legal-rag-benchmark` (comparisons).*
 
 #### 4. Secrets
 Secrets are created by hand and never stored in git or Jenkins:
@@ -174,8 +186,6 @@ All heavy work — chunking, GPU embedding, building the golden set, scoring —
 
 Settings: **GPU T4 × 2**, **Internet on**, and these **Secrets** (Add-ons → Secrets): `QDRANT_URL`, `QDRANT_API_KEY` (write), `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` (write), `MLFLOW_TRACKING_URI`, `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`.
 
-![](images/4_kaggle_secrets.png)
-
 #### 1. Chunking and embedding the Legal Code
 The dataset is pinned to its HuggingFace revision. Each Article is split along the legal structure (Article → Clause → Point → sentence) into chunks of at most 512 tokens, each carrying a header with its subject and Article title. Embedding runs in fp16 on both GPUs and saves shards, so an interrupted run resumes where it stopped (~30–40 min for 87,711 chunks).
 
@@ -202,13 +212,16 @@ The production configuration (hybrid 0.7 · dense + 0.3 · BM25, no rerank) is s
 | `LIMIT_ROWS` | quick smoke test on N Articles (never publishes) |
 
 Run it with **Save Version → Save & Run All** so the output (index + golden set) is saved for the benchmark notebook.
-![](images/5_kaggle_report.png)
-![](images/6_mlflow_run.png)
+![](images/09_kaggle_report.png)
+*The report shown in the notebook (and saved to MLflow as `report.html`): score vs. thresholds, hits in top-k, rank of the first correct Article, score per legal domain.*
+
+![](images/10_mlflow_run.png)
+*The run in MLflow: 29 metrics, 13 parameters, tags `fingerprint`, `gate`, `dataset_rev`, `model_rev`, `code_commit`.*
 
 #### 4. Benchmark 8 retrieval methods
 `kaggle/legal_rag_benchmark.ipynb` takes the build notebook's output as **Input** and compares 8 methods on the same index and the same golden set: TF-IDF → BM25 syllables → BM25 syllables + bigrams → bge-m3 → AITeamVN → hybrid → hybrid + rerank (question) → hybrid + rerank (title, score mixing). Parameters (k1, b, α, β) are tuned on dev, scored on test, with bootstrap confidence intervals and paired randomization tests corrected with Holm. Everything is logged to the MLflow experiment `legal-rag-benchmark`: a parent run with `dashboard.html` and the α / β tuning curves, and one child run per method (all metrics, Recall@k curve).
-![](images/7_benchmark_dashboard.png)
-![](images/8_mlflow_compare.png)
+![](images/11_mlflow_compare.png)
+*Comparing runs side by side in MLflow (chart view).*
 
 ## IV. Deploy the serving stack with Helm
 In normal operation Jenkins deploys everything (section VI). The commands below are what it runs.
@@ -226,15 +239,19 @@ POST /search    (n8n, X-API-Key) {"question": "...", "k": 8} -> top Articles wit
 POST /feedback  (web UI)   {"vote": "up"|"down", "trace_id", "question", "sources"}
 GET  /health
 ```
-![](images/9_web_ui.png)
+![](images/12_web_ui.png)
+*Web UI: answer with numbered citations, the cited Articles on the side, and the 👍 / 👎 buttons.*
 
 #### 2. n8n workflow and the LLM
 The workflow `legal-ask` receives the question from `/ask`, asks the LLM to rewrite it into a short legal title, calls `POST /search` on the API (forwarding the `traceparent` header so both halves share one trace), then asks the LLM to answer **only** from the returned Articles and cite them as `[n]`.
-![](images/10_n8n_workflow.png)
+![](images/06_n8n_workflow.png)
+*n8n workflow `legal-ask`.*
+
+![](images/07_n8n_execution.png)
+*One execution: each node's input and output can be inspected.*
 
 #### 3. Quality gate before every deploy
 Before Helm replaces the pods, a pre-upgrade **Job** checks MLflow for a passing run with the same **configuration fingerprint** (collection + model paths + `Config` parameters + golden set). Code-only changes reuse the existing result and skip in seconds; a new data version, model or parameter triggers a full evaluation on the cluster, and a failing score stops the deploy — production keeps the previous version. After a successful deploy, a post-upgrade Job moves the alias **`champion`** to the new version.
-![](images/11_quality_gate.png)
 
 ## V. Deploy the observability stack
 One chart, `helm/observability`, deployed by Jenkins into the namespace `observability`. Resource requests are tiny (~150m CPU, ~700 Mi RAM in total) to fit a 2-vCPU node.
@@ -244,7 +261,8 @@ helm upgrade --install obs helm/observability --namespace observability --atomic
 
 #### 1. Tracing with Jaeger & OpenTelemetry
 The API sends traces over OTLP straight to Jaeger (`jaeger.observability:4318`). One question = one trace: `POST /ask → n8n → POST /search → embed → qdrant_query → fuse → qdrant_payload`.
-![](images/12_jaeger_trace.png)
+![](images/13_jaeger_trace.png)
+*One question as a single trace across the API, n8n and Qdrant.*
 
 #### 2. Logs with Loki, metrics with Prometheus, dashboards in Grafana
 * **Loki** receives the API's logs over OTLP; every line carries `trace_id`, so Grafana jumps from a log line to its trace and back.
@@ -259,7 +277,11 @@ The API sends traces over OTLP straight to Jaeger (`jaeger.observability:4318`).
 | `legal_dense_top1_score` | cosine of the closest chunk — data-drift signal |
 | `legal_feedback_total{vote}` | thumbs up / down from users |
 
-![](images/13_grafana_dashboard.png)
+![](images/14_grafana_dashboard.png)
+*Dashboard legal-rag API.*
+
+![](images/15_grafana_logs.png)
+*Logs in Loki; every line carries `trace_id` and links to Jaeger.*
 
 ## VI. Setup Jenkins (CI/CD)
 
@@ -268,15 +290,12 @@ Create a kubeconfig for the ServiceAccount `demo:jenkins-deployer` (admin in `le
 ```bash
 TOKEN=$(kubectl -n demo create token jenkins-deployer --duration=8760h)
 ```
-![](images/14_jenkins_kubeconfig.png)
 
 #### 2. Add Harbor credentials
 Create a robot account in the Harbor project `legal-rag` and add it as a **Username with password** credential named `harbor-legal-rag`.
-![](images/15_jenkins_harbor.png)
 
 #### 3. Create the Multibranch Pipeline and the GitHub webhook
 New Item → **Multibranch Pipeline** → GitHub source → this repository; then add a GitHub webhook to `https://<jenkins>/github-webhook/` so every push to `main` builds and deploys.
-![](images/16_jenkins_pipeline.png)
 
 #### 4. What the pipeline does
 1. **Static checks** in parallel: gitleaks (leaked secrets), hadolint (Dockerfile), `helm lint`, trivy config.
@@ -286,6 +305,7 @@ New Item → **Multibranch Pipeline** → GitHub source → this repository; the
 5. **Deploy observability**, then **deploy the API** through the quality gate.
 
 ![](images/17_jenkins_stages.png)
+*Jenkins Stage View: checks → test → build → scan → push → deploy observability → deploy (with the quality gate).*
 
 ## VII. Monitoring quality in production & the feedback loop
 The golden set protects quality **before** a deploy; user feedback watches it **after**. Every answer in the web UI has 👍 / 👎 buttons:
@@ -295,12 +315,13 @@ The golden set protects quality **before** a deploy; user feedback watches it **
 4. a rejected question opens in Jaeger with one click, to see whether retrieval or the LLM was wrong;
 5. `python -m mlops.feedback` exports the rejected questions, a person labels the correct Articles, and `merge` produces `golden_v2` — from the next build on, the gate also scores the questions users complained about.
 
-![](images/18_feedback_loop.png)
+![](images/16_grafana_quality.png)
+*Quality row in Grafana: thumbs-down rate, “no Article found” rate, question ↔ data similarity, user feedback log.*
 
 ## VIII. Demo & results
 
 #### 1. Demo: asking a question
-![](images/19_demo_query.gif)
+Ask a question on `https://legal.oci.lexsy.pro.vn` (see the web UI screenshot in section IV.1); the full path of the request is visible in Jaeger (section V.1).
 
 #### 2. Retrieval quality
 Production configuration on the test split (483 real questions):
@@ -328,7 +349,6 @@ Benchmark of the 8 methods (previous run, 476 test questions):
 
 Reranking on the editor-written title is an upper bound (close to the LLM-rewritten question in n8n); it stays off in production because it adds ~2.3 GB RAM and is slow on CPU. Labels are generated automatically, so scores are best used to compare versions rather than as absolute accuracy.
 
-![](images/20_report_charts.png)
 
 #### 3. Release a new data version end to end
 1. Push the latest code to `main`.
