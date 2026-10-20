@@ -63,11 +63,12 @@ def _slug(s: str) -> str:
 
 
 # ---------- đánh giá ----------
-def evaluate(retriever, items: list[dict], k: int = K, progress: int = 50) -> tuple[list[dict], dict]:
+def evaluate(retriever, items: list[dict], k: int = K, progress: int = 50, rerank_field: str | None = None) -> tuple[list[dict], dict]:
+    """rerank_field: lấy câu ngắn cho reranker từ trường này của bộ câu hỏi (vd. "title"); None = tự rút từ câu hỏi."""
     rows, t_all = [], time.perf_counter()
     for i, it in enumerate(items, 1):
         t0 = time.perf_counter()
-        out = retriever.search(it["query"], None, k, 300)
+        out = retriever.search(it["query"], it.get(rerank_field) if rerank_field else None, k, 300)
         dt = time.perf_counter() - t0
         ranked = [s["key"] for s in out["sources"]]
         m = per_query_metrics(ranked, it["gold"])

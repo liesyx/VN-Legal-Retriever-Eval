@@ -207,6 +207,7 @@ def check_telemetry(api, qr, question):
 def check_mlops(fr, qr, collection, tmp):
     """Đánh giá trên bộ câu hỏi chuẩn + cổng chất lượng + MLflow (giả) — đúng luồng Job deploy: check -> run -> promote."""
     import gzip, json
+    from pathlib import Path
     from mlops import evaluate as ev, golden
     from mlops.metrics import per_query_metrics
     from tests.fake_mlflow import FakeMlflow
@@ -273,6 +274,27 @@ def check_mlops(fr, qr, collection, tmp):
     # MLflow sập: vẫn đánh giá và quyết định theo ngưỡng tối thiểu
     ev.Mlflow = lambda: (_ for _ in ()).throw(ev.MlflowError(0, "DOWN", "down"))
     assert run("--min-ndcg", "0.05") == 0 and run("--min-ndcg", "0.99") == 1
+    # notebook benchmark: run cha (đường nDCG theo α) + mỗi phương pháp một run con (đường Recall@k)
+    import pandas as pd
+    from mlops import bench_lib as le, bench_mlflow
+    per_q = {n: pd.DataFrame([le.per_query_metrics([fr.keys[(i + j) % 90] for j in range(100)], it["gold"]) for i, it in enumerate(items)])
+             for n in ("bm25_syll_bigram", "hybrid_weighted_a0.7")}
+    METRICS = ["ndcg@10", "mrr@10", "recall@10", "recall@100", "hit@1", "hit@10", "p@5", "f2@5", "r_prec", "ap@100"]
+    res = pd.DataFrame([{"method": n, "family": "hybrid" if "hybrid" in n else "lexical", **df[METRICS].mean().to_dict(),
+                         "dev_ndcg@10": 0.4, "ms/query": 3.0, "p_holm": float("nan") if i else 0.01, "sig": "(best)" if i else "*",
+                         "desc": n} for i, (n, df) in enumerate(per_q.items())]).sort_values("ndcg@10", ascending=False)
+    (Path(tmp) / "bench").mkdir(exist_ok=True)
+    (Path(tmp) / "bench" / "dashboard.html").write_text("<html>dash</html>")
+    ev.Mlflow = lambda: ev.__dict__["_RealMlflow"](uri="http://mlflow.test", client=fake.client())
+    pid = bench_mlflow.log_run(res=res, per_q=per_q, metrics=METRICS, ks=le.KS, ci={"hybrid_weighted_a0.7": {"ndcg@10": [0.3, 0.5]}},
+                               alpha_curve=[{"alpha": a / 10, "score": 0.3 + a / 100} for a in range(11)],
+                               rr_mix_rows=[{"variant": "_title", "depth": 20, "curve": [(0.0, 0.4), (0.5, 0.45), (1.0, 0.42)]}],
+                               best="hybrid_weighted_a0.7", production="hybrid_weighted_a0.7", name="benchmark test",
+                               params={"golden": "eval/golden_v1.jsonl.gz"}, tags={"code_commit": "x"}, out_dir=f"{tmp}/bench")
+    kids = [r for r in fake.runs.values() if {"key": "mlflow.parentRunId", "value": pid} in r["data"]["tags"]]
+    steps = [m["step"] for m in fake.runs[pid]["data"]["metrics"] if m["key"] == "dev_ndcg_vs_alpha"]
+    assert len(kids) == 2 and steps == list(range(11)) and any(a.endswith("dashboard.html") for a in fake.artifacts)
+    assert [m["step"] for m in kids[0]["data"]["metrics"] if m["key"] == "recall_at_k"] == list(le.KS)
     print(f"✓ MLOps: nDCG@10 {sq[ev.MAIN]:.3f} (Qdrant == file) · check → run → promote · đã đạt thì bỏ qua · tụt so với champion thì chặn")
 
 

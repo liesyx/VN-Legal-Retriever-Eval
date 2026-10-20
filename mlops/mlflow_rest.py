@@ -69,6 +69,13 @@ class Mlflow:
             self._call("POST", "runs/log-batch", json={"run_id": run_id, "metrics": m[:1000], "params": p[:100], "tags": t[:100]})
             m, p, t = m[1000:], p[100:], t[100:]
 
+    def log_series(self, run_id: str, key: str, points):
+        """Một chỉ số nhiều bước (step nguyên) -> MLflow vẽ thành đường, vd. nDCG theo α, Recall theo k."""
+        ts = int(time.time() * 1000)
+        m = [{"key": key, "value": float(v), "timestamp": ts, "step": int(st)} for st, v in points]
+        for i in range(0, len(m), 1000):
+            self._call("POST", "runs/log-batch", json={"run_id": run_id, "metrics": m[i:i + 1000], "params": [], "tags": []})
+
     def set_tag(self, run_id: str, key: str, value):
         self._call("POST", "runs/set-tag", json={"run_id": run_id, "key": key, "value": str(value)})
 

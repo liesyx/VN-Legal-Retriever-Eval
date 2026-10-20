@@ -17,7 +17,7 @@ import sys
 
 import numpy as np
 
-FIELDS = ("item_id", "split", "lv_name", "query", "gold")
+FIELDS = ("item_id", "split", "lv_name", "title", "query", "gold")    # title: tiêu đề do biên tập viên viết (chỉ dùng khi so sánh rerank)
 
 
 def load(path: str, split: str | None = "test", sample: int = 0, seed: int = 0) -> list[dict]:
@@ -29,7 +29,7 @@ def load(path: str, split: str | None = "test", sample: int = 0, seed: int = 0) 
         with op(path, "rt", encoding="utf-8") as f:
             rows = [json.loads(l) for l in f if l.strip()]
     items = [{"item_id": str(r["item_id"]), "split": r.get("split", "test"), "lv_name": r.get("lv_name") or "",
-              "query": str(r["query"]), "gold": [str(g) for g in r["gold"]]} for r in rows]
+              "title": r.get("title") or "", "query": str(r["query"]), "gold": [str(g) for g in r["gold"]]} for r in rows]
     items = [r for r in items if r["gold"] and (split is None or r["split"] == split)]
     if sample and sample < len(items):            # lấy mẫu cố định (seed) để các lần chạy so được với nhau
         idx = np.sort(np.random.default_rng(seed).choice(len(items), sample, replace=False))

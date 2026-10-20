@@ -36,6 +36,10 @@ Sau đó sửa `values.yaml` (`data.version: vN`, `quality.enabled: true`) → p
 ```bash
 python -m pipeline.publish_qdrant --list            # các bản trên Qdrant ; --delete phapdien_v1 để xoá bản cũ
 ```
+So sánh phương pháp: `kaggle/legal_rag_benchmark.ipynb` (benchmark 8 phương pháp, LITE / đủ 25 cấu hình) — Add Input = Output
+notebook build (cùng index + bộ câu hỏi chuẩn) → `dashboard.html` + MLflow experiment `legal-rag-benchmark`
+(run cha: dashboard, đường nDCG theo α/β; mỗi phương pháp một run con: đủ chỉ số, Recall@k). Thư viện: `mlops/bench_lib.py`
+(= legal_eval.py cũ, phần chung lấy từ legal_core/pipeline/mlops.labels) và `mlops/bench_dashboard.py`.
 
 ## Triển khai
 ```
