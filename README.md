@@ -156,7 +156,7 @@ kubectl -n legal-rag run mlcheck --rm -it --restart=Never --image=curlimages/cur
 ```
 ![](images/08_mlflow_stack.png)
 *MLflow 3.17 on Coolify — experiments `legal-rag-retrieval` (gate) and `legal-rag-benchmark` (comparisons).*
-
+k8s:![](images/10_mlflow_run.png)
 #### 4. Secrets
 Secrets are created by hand and never stored in git or Jenkins:
 ```bash
@@ -215,7 +215,7 @@ Run it with **Save Version → Save & Run All** so the output (index + golden se
 ![](images/09_kaggle_report.png)
 *The report shown in the notebook (and saved to MLflow as `report.html`): score vs. thresholds, hits in top-k, rank of the first correct Article, score per legal domain.*
 
-![](images/10_mlflow_run.png)
+
 *The run in MLflow: 29 metrics, 13 parameters, tags `fingerprint`, `gate`, `dataset_rev`, `model_rev`, `code_commit`.*
 
 #### 4. Benchmark 8 retrieval methods
