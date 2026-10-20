@@ -28,9 +28,11 @@ def _kv(d: dict) -> list:
 class Mlflow:
     def __init__(self, uri: str | None = None, client: httpx.Client | None = None):
         env = os.environ.get
-        self.uri = (uri or env("MLFLOW_TRACKING_URI") or "").rstrip("/")
+        self.uri = (uri or env("MLFLOW_TRACKING_URI") or "").strip().rstrip("/")
         if not self.uri:
             raise MlflowError(0, "NOT_CONFIGURED", "thiếu MLFLOW_TRACKING_URI")
+        if "://" not in self.uri:                  # "mlflow.example.com" -> "https://mlflow.example.com"
+            self.uri = "https://" + self.uri
         auth = (env("MLFLOW_TRACKING_USERNAME"), env("MLFLOW_TRACKING_PASSWORD"))
         headers = {"Authorization": f"Bearer {env('MLFLOW_TRACKING_TOKEN')}"} if env("MLFLOW_TRACKING_TOKEN") else {}
         self.http = client or httpx.Client(timeout=30, headers=headers, auth=auth if all(auth) else None)

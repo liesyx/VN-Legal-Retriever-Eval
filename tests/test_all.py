@@ -245,7 +245,9 @@ def check_mlops(fr, qr, collection, tmp):
     r1 = next(iter(fake.runs.values()))
     t1 = {t["key"]: t["value"] for t in r1["data"]["tags"]}
     assert t1["gate"] == "passed" and t1["model_version"] == "1" and fake.models["legal-rag-retriever"]["aliases"] == {"candidate": "1"}
-    assert any(a.endswith("per_query.csv") for a in fake.artifacts) and json.load(open(f"{tmp}/eval/summary.json"))["gate"] == "passed"
+    assert any(a.endswith("per_query.csv") for a in fake.artifacts)
+    page = next(v for k, v in fake.artifacts.items() if k.endswith("report.html"))
+    assert "<svg" in page and "nDCG@10" in page and "<script" not in page and json.load(open(f"{tmp}/eval/summary.json"))["gate"] == "passed"
     assert ev.main(["promote"]) == 0 and fake.models["legal-rag-retriever"]["aliases"]["champion"] == "1"
     assert ev.main(["check", "--skip", skip]) == 0 and open(skip).read() == r1["info"]["run_id"]
     assert run() == 0 and len(fake.runs) == 1, "đã đạt -> không chạy lại"

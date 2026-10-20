@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from legal_core.search import Config
-from mlops import golden
+from mlops import golden, report
 from mlops.metrics import bootstrap_ci, per_query_metrics
 from mlops.mlflow_rest import Mlflow, MlflowError, metrics_of, tags_of
 
@@ -72,7 +72,9 @@ def evaluate(retriever, items: list[dict], k: int = K, progress: int = 50) -> tu
         ranked = [s["key"] for s in out["sources"]]
         m = per_query_metrics(ranked, it["gold"])
         rows.append({"item_id": it["item_id"], "lv_name": it["lv_name"], "seconds": round(dt, 3), **m,
-                     "gold": "|".join(it["gold"]), "top3": "|".join(ranked[:3])})
+                     "gold": "|".join(it["gold"]), "top3": "|".join(ranked[:3]),
+                     "top1_title": (out["sources"][0]["citation"] + " — " + out["sources"][0]["title"])[:160] if out["sources"] else "",
+                     "query": it["query"][:300]})
         if progress and i % progress == 0:
             nd = np.mean([r["ndcg@10"] for r in rows])
             log.info("%d/%d câu · nDCG@10 tạm %.4f · %.2f s/câu", i, len(items), nd, (time.perf_counter() - t_all) / i)
@@ -188,8 +190,9 @@ def cmd_run(a) -> int:
     ok, why, champ = gate(s, desc, a.min_ndcg, a.max_drop) if gate_on else (True, "thí nghiệm (không xét cổng)", None)
     record(desc, s, rows, "passed" if ok and gate_on else ("failed" if gate_on else "experiment"), why,
            name=a.name or f"{collection} · {'rerank' if cfg.depth else 'hybrid'} · {env('APP_VERSION', 'local')}",
-           out=a.out, tags={"purpose": "gate" if gate_on else "experiment", "split": a.split,
-                            **({"champion_version": champ["version"]} if champ else {})})
+           out=a.out, champion=champ, min_ndcg=a.min_ndcg,
+           tags={"purpose": "gate" if gate_on else "experiment", "split": a.split,
+                 **({"champion_version": champ["version"]} if champ else {})})
     return 0 if (ok or not gate_on) else 1
 
 
@@ -207,7 +210,7 @@ def gate(s: dict, desc: dict, min_ndcg: float = 0.40, max_drop: float = 0.01):
 
 
 def record(desc: dict, s: dict, rows: list, status: str, why: str, *, name: str, out: str | None = None,
-           tags: dict | None = None) -> str | None:
+           tags: dict | None = None, champion: dict | None = None, min_ndcg: float = 0.40) -> str | None:
     """Lưu summary.json + per_query.csv và ghi một run MLflow; status passed -> đăng ký phiên bản model (alias candidate).
     Lỗi MLflow chỉ cảnh báo. -> run_id hoặc None."""
     fp = fingerprint(desc)
@@ -218,6 +221,9 @@ def record(desc: dict, s: dict, rows: list, status: str, why: str, *, name: str,
     csv = to_csv(rows)
     (o / "summary.json").write_text(summary)
     (o / "per_query.csv").write_text(csv, encoding="utf-8")
+    page = report.build(s, rows, desc, status, why, min_ndcg=float(env("GATE_MIN_NDCG") or min_ndcg),
+                        champion=(champion or {}).get("metrics", {}).get(MAIN), title=name)
+    (o / "report.html").write_text(page, encoding="utf-8")
     ml = _ml()
     if not ml:
         return None
@@ -227,6 +233,7 @@ def record(desc: dict, s: dict, rows: list, status: str, why: str, *, name: str,
                               "app_version": env("APP_VERSION", "local"), **(tags or {})})
         rid = info["run_id"]
         ml.log_batch(rid, params=desc, metrics=s)
+        ml.log_text(info, "report.html", page)          # mở trong tab Artifacts: biểu đồ + giải thích
         ml.log_text(info, "summary.json", summary)
         ml.log_text(info, "per_query.csv", csv)
         ml.log_text(info, "failures.csv", to_csv([x for x in rows if x["hit@10"] == 0]))
