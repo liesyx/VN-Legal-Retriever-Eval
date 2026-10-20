@@ -66,6 +66,10 @@ The project is built as an **MLOps system**, not just an app: every data or mode
 * Corpus: [tmquan/phapdien-moj-gov-vn](https://huggingface.co/datasets/tmquan/phapdien-moj-gov-vn) — the Vietnamese Legal Code from the Ministry of Justice
 * Evaluation questions: [tmquan/pbgdpl-vn-legal-qna](https://huggingface.co/datasets/tmquan/pbgdpl-vn-legal-qna) — 4,593 real citizen questions answered by Ministry of Justice officers
 
+**Available at::**
+* Corpus: [https://legal.oci.lexsy.pro.vn/](https://legal.oci.lexsy.pro.vn/) — the Vietnamese Legal web
+
+
 **Project Structure**
 ```txt
   ├── legal_core                              /* Retrieval algorithm shared by production and build */
