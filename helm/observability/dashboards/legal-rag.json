@@ -32,6 +32,12 @@
    "url": "https://jaeger.oci.lexsy.pro.vn",
    "type": "link",
    "targetBlank": true
+  },
+  {
+   "title": "MLflow",
+   "url": "https://mlflow.oci.lexsy.pro.vn",
+   "type": "link",
+   "targetBlank": true
   }
  ],
  "panels": [
@@ -575,6 +581,266 @@
     }
    ],
    "id": 17
+  },
+  {
+   "type": "row",
+   "title": "Chất lượng (MLOps) — offline xem trong MLflow, đây là online",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 52,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [],
+   "id": 18
+  },
+  {
+   "type": "stat",
+   "title": "👍 (24 giờ)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 53,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(legal_feedback_total{vote=\"up\"}[24h])) or vector(0)"
+    }
+   ],
+   "id": 19
+  },
+  {
+   "type": "stat",
+   "title": "👎 (24 giờ)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 53,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(legal_feedback_total{vote=\"down\"}[24h])) or vector(0)"
+    }
+   ],
+   "id": 20
+  },
+  {
+   "type": "stat",
+   "title": "Tỉ lệ 👎 (7 ngày)",
+   "description": "Trên 30% là dấu hiệu chất lượng tụt: xem các câu 👎 ở bảng log bên dưới, gom bằng mlops/feedback.py",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 53,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.2
+       },
+       {
+        "color": "red",
+        "value": 0.3
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(legal_feedback_total{vote=\"down\"}[7d])) / clamp_min(sum(increase(legal_feedback_total[7d])), 1)"
+    }
+   ],
+   "options": {
+    "colorMode": "background"
+   },
+   "id": 21
+  },
+  {
+   "type": "stat",
+   "title": "Tỉ lệ không tìm được Điều (24 giờ)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 18,
+    "y": 53,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.1
+       },
+       {
+        "color": "red",
+        "value": 0.2
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(legal_ask_total{result=\"no_answer\"}[24h])) / clamp_min(sum(increase(legal_ask_total{result=~\"ok|no_answer\"}[24h])), 1)"
+    }
+   ],
+   "options": {
+    "colorMode": "background"
+   },
+   "id": 22
+  },
+  {
+   "type": "timeseries",
+   "title": "Độ giống câu hỏi ↔ dữ liệu (cosine chunk gần nhất)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "Giám sát trôi dữ liệu: p10 tụt dần = người dùng hỏi nhiều điều Pháp điển không có (văn bản mới, lĩnh vực lạ) → cần cập nhật dữ liệu",
+   "gridPos": {
+    "x": 0,
+    "y": 57,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "max": 1,
+     "custom": {
+      "fillOpacity": 10,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.1, sum by (le) (rate(legal_dense_top1_score_bucket[1h])))",
+     "legendFormat": "p10"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(legal_dense_top1_score_bucket[1h])))",
+     "legendFormat": "p50"
+    }
+   ],
+   "id": 23
+  },
+  {
+   "type": "logs",
+   "title": "Phản hồi người dùng",
+   "datasource": {
+    "type": "loki",
+    "uid": "loki"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 57,
+    "w": 12,
+    "h": 8
+   },
+   "options": {
+    "showTime": true,
+    "wrapLogMessage": true,
+    "sortOrder": "Descending",
+    "enableLogDetails": true
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "expr": "{service_name=\"legal-rag-api\"} | vote=~\"up|down\""
+    }
+   ],
+   "id": 24
   }
  ]
 }

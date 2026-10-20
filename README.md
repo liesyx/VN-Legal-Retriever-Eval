@@ -7,6 +7,7 @@ n8n lo phần LLM (viết lại câu hỏi, trả lời); API chỉ trả các �
 legal_core/   thuật toán dùng chung (tách từ, trộn điểm, Config)
 pipeline/     build dữ liệu: dựng BM25, đẩy collection phapdien_vN lên Qdrant (chạy local/Colab)
 prod/         API FastAPI chạy trong pod (chỉ đọc Qdrant)
+mlops/        đánh giá trên bộ câu hỏi chuẩn, MLflow, cổng chất lượng khi deploy, gom phản hồi 👎
 tests/        test với dữ liệu giả, Qdrant trong bộ nhớ (Jenkins chạy)
 web/          giao diện người dùng (HTML/CSS/JS thuần, busybox httpd), gọi backend /ask
 helm/legal-rag  Dockerfile Jenkinsfile   CI/CD lên k3s
@@ -19,20 +20,21 @@ Luồng người dùng: trình duyệt (`legal.oci.lexsy.pro.vn`, pod web NodePo
 ## API
 ```
 POST /ask      (giao diện web, CORS + giới hạn 10 câu/phút/IP) {"question", "k"} -> chuyển sang n8n, trả nguyên kết quả
+POST /ask      (giao diện web) {"question": "...", "k": 5} -> n8n -> {..., "trace_id"}
+POST /feedback (giao diện web) {"vote": "up"|"down", "trace_id", "question", "sources": [key...]} -> 204
 POST /search   header X-API-Key   {"question": "...", "rerank_query": "...", "k": 8, "max_chars": 2500}
   -> {"rerank_query", "sources": [{"n", "key", "citation", "title", "effective_date", "text"}], "timings_ms"}
 GET  /health   -> {"ok": true, "collection": "phapdien_v1", "rerank": false}
 ```
 
-## Dữ liệu mới (local / Colab)
+## Dữ liệu mới: notebook Kaggle `kaggle/legal_rag_build.ipynb`
+Một notebook, dùng chính code repo (clone lúc chạy): chunk (`pipeline/chunker.py`) → embedding 2×T4 (`pipeline/embed.py`)
+→ bộ câu hỏi chuẩn (`mlops/labels.py`, như benchmark) → chấm đúng cấu hình production → cổng chất lượng
+→ (đạt + `PUBLISH = True`) Qdrant `phapdien_vN` + MinIO (bảng từ, bộ câu hỏi) + MLflow (run đạt, Model Registry `candidate`).
+Sau đó sửa `values.yaml` (`data.version: vN`, `quality.enabled: true`) → push → Jenkins thấy cấu hình đã ĐẠT trong MLflow
+(cùng vân tay) nên không chấm lại → deploy → `champion`. Secrets Kaggle: xem ô đầu notebook.
 ```bash
-pip install -r pipeline/requirements.txt
-export QDRANT_URL=https://qdrant.oci.lexsy.pro.vn QDRANT_API_KEY=...
-python -m pipeline.publish_qdrant --index-dir <thư mục chunks.parquet + embeddings.f16.npy> --version 2
-# -> collection phapdien_v2 + bm25_vocab_v2.json.gz ; bị ngắt thì chạy lại đúng lệnh
-mc cp bm25_vocab_v2.json.gz <minio>/legal-rag/data/phapdien_v2/bm25_vocab.json.gz
-# sửa helm/legal-rag/values.yaml: data.version: v2 -> push main -> Jenkins deploy
-python -m pipeline.publish_qdrant --list            # xem các bản ; --delete phapdien_v1 để xoá bản cũ
+python -m pipeline.publish_qdrant --list            # các bản trên Qdrant ; --delete phapdien_v1 để xoá bản cũ
 ```
 
 ## Triển khai
@@ -102,3 +104,39 @@ Metrics của API: `legal_http_request_seconds{route,status}`, `legal_search_sta
 `legal_n8n_seconds`, `legal_info{collection,rerank,version}`.
 Tài nguyên: requests tổng ~150m CPU / ~700Mi RAM (máy 2 CPU); limits cho phép dùng thêm khi rảnh. Chỉ log của API vào Loki
 (log pod khác: `kubectl logs`). Trace lưu RAM nên mất khi Jaeger restart.
+
+## MLOps: đánh giá · MLflow · cổng chất lượng · phản hồi
+```
+             THÍ NGHIỆM (Colab/local)                      DEPLOY (Jenkins -> helm upgrade)
+ notebook index ─► mlops.evaluate run --index-dir   ┌─► Job pre-upgrade "legal-rag-eval":
+   --alpha/--depth --no-gate ─► MLflow (so sánh)   │     check: cấu hình này đã ĐẠT trong MLflow? -> bỏ qua (vài giây)
+ publish_qdrant phapdien_vN+1, sửa data.version ───┘     chưa: tải model + bộ câu hỏi, chấm 494 câu trên Qdrant
+                                                          nDCG@10 < 0,40 hoặc tụt > 0,01 so với champion -> DỪNG deploy
+                                                          đạt -> MLflow run + Model Registry v_n (alias candidate)
+                                                    ──► pod mới ──► Job post-upgrade: alias champion = v_n
+ PRODUCTION: 👍/👎 trên web ─► /feedback ─► Prometheus (tỉ lệ 👎) + Loki (câu hỏi, trace_id)
+             cosine câu hỏi↔dữ liệu (trôi dữ liệu), tỉ lệ không tìm được Điều  ──► Grafana › Chất lượng
+             mlops.feedback: gom câu 👎 -> gán nhãn -> golden_v2 -> đổi quality.golden -> chấm lại mọi bản
+```
+"Cấu hình" = collection `phapdien_vN` + đường dẫn model trên MinIO + tham số `Config` + bộ câu hỏi chuẩn.
+Chỉ sửa code -> không chấm lại (test trong CI đã khoá: Qdrant == file == benchmark). Đổi model thì đổi đường dẫn (vd. `.../v2`).
+
+Cài 1 lần: bộ câu hỏi chuẩn do notebook Kaggle tạo và đẩy lên MinIO (`eval/golden_v1.jsonl.gz`).
+Có sẵn `qrels.parquet` của notebook benchmark cũ thì cũng dùng được: `python -m mlops.golden qrels.parquet golden_v1.jsonl.gz`.
+MLflow: `quality.mlflow.uri`; có đăng nhập thì thêm MLFLOW_TRACKING_USERNAME / MLFLOW_TRACKING_PASSWORD vào Secret legal-rag-secrets.
+
+Thí nghiệm (mỗi lần là một run trong experiment `legal-rag-retrieval`, so sánh trên giao diện MLflow):
+```bash
+export MLFLOW_TRACKING_URI=https://mlflow.oci.lexsy.pro.vn
+python -m mlops.evaluate run --index-dir <index> --golden benchmark/qrels.parquet --no-gate --alpha 0.6 --name "alpha 0.6"
+python -m mlops.evaluate run --index-dir <index> --golden benchmark/qrels.parquet --no-gate --depth 20 --name "rerank 20"
+```
+Vận hành:
+```bash
+kubectl -n legal-rag logs job/legal-rag-eval --all-containers     # kết quả cổng chất lượng lần deploy gần nhất
+kubectl -n observability port-forward svc/loki 3100:3100 &
+python -m mlops.feedback --days 7 -o feedback_down.jsonl          # câu 👎 -> điền "gold" -> merge thành golden_v2
+python -m mlops.feedback merge golden_v1.jsonl.gz feedback_down.jsonl -o golden_v2.jsonl.gz
+```
+Tắt cổng tạm thời: `quality.enabled: false`. Máy chậm: `quality.sample: 150` (đổi sample = cấu hình mới, chấm lại).
+Đánh giá chấm câu hỏi gốc (không qua LLM viết lại), nên số đo so được với benchmark (hybrid 0,428).

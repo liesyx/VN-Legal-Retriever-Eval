@@ -28,7 +28,7 @@ pipeline {
     timestamps()
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
-    timeout(time: 60, unit: 'MINUTES')
+    timeout(time: 75, unit: 'MINUTES')
   }
 
   stages {
@@ -150,10 +150,16 @@ pipeline {
       steps {
         withCredentials([file(credentialsId: 'kubeconfig-k3s', variable: 'KUBECONFIG')]) {
           sh '''
+            # Trước khi đổi pod: Job cổng chất lượng (helm hook) chấm bộ câu hỏi chuẩn nếu dữ liệu/model/tham số đổi.
+            # Không đạt -> helm dừng, production giữ bản cũ; log Job in ra bên dưới, chi tiết xem trong MLflow.
             helm upgrade --install $RELEASE $CHART_DIR \
               --namespace $NAMESPACE \
               --set image.repository=$IMAGE --set image.tag=$IMAGE_TAG \
-              --atomic --wait --timeout 15m --history-max 10
+              --atomic --wait --timeout 30m --history-max 10 \
+            || { echo "===== log Job cổng chất lượng ($RELEASE-eval) ====="
+                 kubectl -n $NAMESPACE logs job/$RELEASE-eval --all-containers --tail=80 2>/dev/null \
+                   || echo "(không đọc được log: kubectl -n $NAMESPACE logs job/$RELEASE-eval --all-containers)"
+                 exit 1; }
             helm -n $NAMESPACE history $RELEASE --max 5
           '''
         }

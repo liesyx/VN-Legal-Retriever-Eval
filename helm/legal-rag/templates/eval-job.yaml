@@ -1,0 +1,122 @@
+{{- if .Values.quality.enabled }}
+{{- $q := .Values.quality }}
+# CỔNG CHẤT LƯỢNG — chạy TRƯỚC khi Helm đổi Deployment (pre-install/pre-upgrade hook):
+#   1. gate-check  : MLflow đã có lần ĐẠT cho đúng cấu hình (collection + model + tham số + bộ câu hỏi) chưa? có -> bỏ qua
+#   2. fetch       : tải model + bảng từ + bộ câu hỏi chuẩn từ MinIO (bỏ qua nếu bước 1 thấy đã đạt)
+#   3. evaluate    : chạy bộ câu hỏi chuẩn trên Qdrant, ghi MLflow, so với champion; KHÔNG ĐẠT -> Job lỗi -> Helm dừng,
+#                    production giữ nguyên bản cũ (Jenkins in log Job này)
+# Chỉ đổi code -> bước 1 thấy đã đạt -> vài giây. Đổi data.version / model / rerank / bộ câu hỏi -> chạy lại (~5–15 phút CPU).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-eval
+  labels:
+    {{- include "legal-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: eval
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation   # giữ Job (và log) tới lần deploy sau để xem lại
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ $q.timeoutSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: legal-rag-eval
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: gate-check
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["python", "-m", "mlops.evaluate", "check", "--skip", "/work/skip"]
+          env:
+            {{- include "legal-rag.retrieverEnv" . | nindent 12 }}
+            {{- include "legal-rag.qualityEnv" . | nindent 12 }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: tmp, mountPath: /tmp }
+        {{- include "legal-rag.fetch" (dict "root" . "golden" true) | nindent 8 }}
+      containers:
+        - name: evaluate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["python", "-m", "mlops.evaluate", "run", "--skip", "/work/skip", "--out", "/tmp/eval"]
+          env:
+            {{- include "legal-rag.retrieverEnv" . | nindent 12 }}
+            {{- include "legal-rag.qualityEnv" . | nindent 12 }}
+            - { name: HF_HUB_OFFLINE, value: "1" }
+            - { name: TRANSFORMERS_OFFLINE, value: "1" }
+            - { name: HF_HOME, value: /tmp/hf }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          resources:
+            {{- toYaml $q.resources | nindent 12 }}
+          volumeMounts:
+            - { name: models, mountPath: /models, readOnly: true }
+            - { name: work, mountPath: /work, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: models
+          emptyDir: { sizeLimit: {{ ternary "6Gi" "3Gi" .Values.rerank.enabled }} }
+        - { name: work, emptyDir: { sizeLimit: 1Mi } }
+        - { name: tmp, emptyDir: { sizeLimit: 512Mi } }
+---
+# Deploy xong -> gắn alias "champion" trong MLflow Model Registry cho cấu hình vừa lên production.
+# Không bao giờ báo lỗi (lỗi MLflow không được làm hỏng một lần deploy đã thành công).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-promote
+  labels:
+    {{- include "legal-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promote
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: legal-rag-promote
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: promote
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["python", "-m", "mlops.evaluate", "promote"]
+          env:
+            {{- include "legal-rag.retrieverEnv" . | nindent 12 }}
+            {{- include "legal-rag.qualityEnv" . | nindent 12 }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          resources:
+            requests: { cpu: 25m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
+{{- end }}

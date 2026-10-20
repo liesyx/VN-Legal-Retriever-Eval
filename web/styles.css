@@ -195,3 +195,14 @@ body.has-thread .intro { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before { animation: none !important; transition: none !important; }
 }
+
+/* ---------- 👍/👎 ---------- */
+.vote { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; max-width: var(--measure);
+  margin: 4px 0 8px; font-size: 14px; color: var(--ink-2); }
+.vote-q { margin-right: 4px; }
+.vote-btn { background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 4px 12px; font-size: 14px; }
+.vote-btn:hover:not(:disabled) { border-color: var(--ink-2); }
+.vote-btn:disabled { cursor: default; opacity: .55; }
+.vote-btn[aria-pressed="true"] { opacity: 1; border-color: var(--ink); background: var(--paper); font-weight: 500; }
+.vote-thanks { flex-basis: 100%; color: var(--ok); }
+.vote[hidden], .vote-thanks[hidden] { display: none; }

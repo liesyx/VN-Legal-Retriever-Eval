@@ -1,6 +1,7 @@
 "use strict";
 
 const API = document.querySelector('meta[name="legal-api"]')?.content || "/ask";   // backend legal-api
+const FEEDBACK = API.replace(/\/ask$/, "/feedback");
 const TIMEOUT_MS = 120000;
 const STEP_AT = [0, 6000, 9000]; // n8n trả một lần: mốc chuyển bước ước theo thời gian thực tế
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -123,11 +124,14 @@ async function ask(question, turn) {
   }
 
   progress.hidden = true;
+  $(".vote", turn).hidden = true;
   if (!problem && data && data.ok && data.answer) {
     const answer = $(".answer", turn);
     answer.innerHTML = renderAnswer(data.answer);
     answer.hidden = false;
     renderSources(turn, data.sources || [], data.used_sources || []);
+    turn._fb = { trace_id: data.trace_id || null, question, sources: (data.sources || []).map((x) => x.key).filter(Boolean) };
+    resetVote(turn);
   } else {
     $(".failure-text", failure).textContent = problem || data?.reply_text || "Chưa tìm thấy Điều luật phù hợp. Thử kể rõ hơn tình huống của bạn.";
     failure.hidden = false;
@@ -143,6 +147,30 @@ function addTurn(question) {
   turn.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" });
   ask(question, turn);
 }
+
+/* ---------- 👍/👎: gửi về backend, đếm trong Grafana, câu 👎 được gom để bổ sung bộ câu hỏi chuẩn ---------- */
+function resetVote(turn) {
+  const box = $(".vote", turn);
+  box.querySelectorAll(".vote-btn").forEach((b) => { b.disabled = false; b.removeAttribute("aria-pressed"); });
+  $(".vote-thanks", box).hidden = true;
+  box.hidden = false;
+}
+
+thread.addEventListener("click", (e) => {
+  const btn = e.target.closest(".vote-btn");
+  if (!btn) return;
+  const turn = btn.closest(".turn");
+  const box = btn.closest(".vote");
+  box.querySelectorAll(".vote-btn").forEach((b) => { b.disabled = true; });
+  btn.setAttribute("aria-pressed", "true");
+  $(".vote-thanks", box).hidden = false;
+  fetch(FEEDBACK, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vote: btn.dataset.vote, ...(turn._fb || {}) }),
+    keepalive: true,
+  }).catch(() => {});
+});
 
 /* ---------- citation [n] -> its slip ---------- */
 thread.addEventListener("click", (e) => {

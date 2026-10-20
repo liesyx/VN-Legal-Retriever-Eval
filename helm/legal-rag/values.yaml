@@ -61,3 +61,22 @@ observability:
   tracesEndpoint: http://jaeger.observability:4318/v1/traces
   logsEndpoint: http://loki.observability:3100/otlp/v1/logs
   metricsPort: 9100
+
+# CỔNG CHẤT LƯỢNG (MLOps) — Job chạy trước mỗi lần deploy (templates/eval-job.yaml):
+# đánh giá bộ câu hỏi chuẩn trên đúng cấu hình sắp lên, ghi MLflow, không đạt -> không deploy.
+# Chỉ chạy lại khi cấu hình đổi (data.version, model, rerank, golden); đổi code thì dùng kết quả cũ trong MLflow.
+quality:
+  enabled: false                      # bật (true) cùng lúc đổi data.version sang bản do notebook Kaggle đẩy lên
+                                      # (lúc đó MinIO mới có bộ câu hỏi chuẩn; thiếu file thì Job lỗi -> không deploy được)
+  golden: eval/golden_v1.jsonl.gz     # trên MinIO bucket s3.bucket — tạo bằng: python -m mlops.golden qrels.parquet ...
+  minNdcg10: 0.40                     # benchmark: hybrid 0,428 trên 494 câu test (không rerank)
+  maxDrop: 0.01                       # được tụt tối đa 0,01 so với champion (nhiễu đo ~±0,02 với 494 câu)
+  sample: 0                           # 0 = toàn bộ 494 câu; đặt 150 nếu máy quá chậm
+  timeoutSeconds: 1800
+  mlflow:
+    uri: https://mlflow.oci.lexsy.pro.vn
+    experiment: legal-rag-retrieval
+    model: legal-rag-retriever        # Model Registry: alias "candidate" (đạt cổng) -> "champion" (đã lên production)
+  resources:
+    requests: { cpu: 250m, memory: 2Gi }   # chạy song song pod API cũ: request nhỏ, limit cho dùng hết CPU rảnh
+    limits: { cpu: "2", memory: 4Gi }

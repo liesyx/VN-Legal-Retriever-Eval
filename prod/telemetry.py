@@ -27,6 +27,9 @@ STAGE = Histogram("legal_search_stage_seconds", "Thời gian từng bước tìm
                   buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10))
 ASK = Counter("legal_ask_total", "Câu hỏi từ giao diện web theo kết quả", ["result"])
 N8N = Histogram("legal_n8n_seconds", "Thời gian chờ n8n trả lời (2 lần gọi LLM + /search)", buckets=_SLOW)
+DENSE_TOP1 = Histogram("legal_dense_top1_score", "Cosine của chunk gần nhất với câu hỏi (thấp = câu hỏi lạ / dữ liệu thiếu)",
+                       buckets=(0.2, 0.3, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.9))
+FEEDBACK = Counter("legal_feedback_total", "Phản hồi 👍/👎 của người dùng trên giao diện web", ["vote"])
 INFO = Gauge("legal_info", "Cấu hình đang chạy", ["collection", "rerank", "version"])
 
 

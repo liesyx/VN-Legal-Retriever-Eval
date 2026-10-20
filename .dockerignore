@@ -1,6 +1,7 @@
 **
 !legal_core/**
 !prod/**
+!mlops/**
 !pipeline/**
 !tests/**
 **/__pycache__

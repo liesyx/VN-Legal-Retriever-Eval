@@ -133,6 +133,8 @@ def main(index_dir):
         assert c.post("/ask", headers={"X-Forwarded-For": "9.9.9.9"}, json={"question": "n8n đang lỗi thì sao"}).status_code == 502
     print("✓ API (/search, /ask, giới hạn theo IP)")
     check_telemetry(api, qr, qs[0])
+    check_mlops(fr, qr, name, tmp)
+    check_build_tools(fr)
     print("ALL OK")
 
 
@@ -185,7 +187,135 @@ def check_telemetry(api, qr, question):
     m = generate_latest().decode()
     assert 'legal_search_stage_seconds_count{stage="embed"}' in m and 'legal_ask_total{result="ok"}' in m
     assert 'legal_http_request_seconds_count{method="POST",route="/ask",status="200"}' in m
+    # 👍/👎: /ask trả trace_id -> giao diện gửi lại cùng phiếu; phiếu thành metric + log có vote/ask_trace_id
+    with TestClient(api.app) as c:
+        api.STATE["http"] = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json={"ok": True, "answer": "x [1]", "sources": []})))
+        tid = c.post("/ask", headers={"X-Forwarded-For": "8.8.8.8"}, json={"question": question}).json()["trace_id"]
+        assert len(tid) == 32
+        fb = {"vote": "down", "trace_id": tid, "question": question, "sources": ["k1", "k2"]}
+        assert c.post("/feedback", headers={"X-Forwarded-For": "8.8.8.8"}, json=fb).status_code == 204
+        assert c.post("/feedback", json={**fb, "vote": "meh"}).status_code == 422
+        assert c.post("/feedback", json={**fb, "trace_id": "không-phải-hex"}).status_code == 422
+    rec = next(r.log_record for r in logs.get_finished_logs() if str(r.log_record.body).startswith("feedback down"))
+    assert rec.attributes["vote"] == "down" and rec.attributes["ask_trace_id"] == tid and rec.attributes["sources"] == "k1,k2"
+    m = generate_latest().decode()
+    assert 'legal_feedback_total{vote="down"} 1.0' in m and "legal_dense_top1_score_count" in m
     print(f"✓ telemetry: {len(got)} span cùng 1 trace (/ask → n8n → /search → embed/qdrant/rerank), log có trace_id, metrics có số liệu")
+
+
+def check_mlops(fr, qr, collection, tmp):
+    """Đánh giá trên bộ câu hỏi chuẩn + cổng chất lượng + MLflow (giả) — đúng luồng Job deploy: check -> run -> promote."""
+    import gzip, json
+    from mlops import evaluate as ev, golden
+    from mlops.metrics import per_query_metrics
+    from tests.fake_mlflow import FakeMlflow
+    import prod.qdrant_retriever as pq
+
+    # chỉ số khớp công thức benchmark (tính tay)
+    m = per_query_metrics(["a", "x", "b"], ["a", "b"])
+    assert abs(m["ndcg@10"] - (1 + 1 / np.log2(4)) / (1 + 1 / np.log2(3))) < 1e-12 and m["mrr@10"] == 1 and m["recall@3"] == 1
+    assert per_query_metrics(["x", "a"], ["a"])["mrr@10"] == 0.5 and per_query_metrics(["x"], ["a"])["first_rank"] == 0
+
+    # bộ câu hỏi chuẩn giả: câu hỏi lấy từ một chunk, đáp án = Điều chứa chunk đó
+    rows = [{"item_id": f"q{i}", "split": "test" if i % 4 else "dev", "lv_name": ["Lao động", "Dân sự"][i % 2],
+             "query": "Cho hỏi " + " ".join(fr.texts[i].split()[2:14]), "gold": [fr.keys[i]]} for i in range(0, 120, 3)]
+    gpath = f"{tmp}/golden_v1.jsonl.gz"
+    with gzip.open(gpath, "wt", encoding="utf-8") as f:
+        f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    items = golden.load(gpath)
+    assert len(items) == 30 and all(r["split"] == "test" for r in items)
+    assert [r["item_id"] for r in golden.load(gpath, sample=10)] == [r["item_id"] for r in golden.load(gpath, sample=10)]
+
+    rq, sq = ev.evaluate(qr, items, progress=0)
+    rf, sf = ev.evaluate(fr, items, progress=0)
+    assert [r["ndcg@10"] for r in rq] == [r["ndcg@10"] for r in rf], "Qdrant và file phải cho cùng điểm"
+    assert sq["n_queries"] == 30 and 0 < sq[ev.MAIN] <= 1 and "ndcg_at_10/lao_dong" in sq
+
+    # luồng Job: check -> run -> promote, rồi lần deploy sau (chỉ đổi code) được bỏ qua
+    fake = FakeMlflow()
+    ev.Mlflow = lambda: ev.__dict__["_RealMlflow"](uri="http://mlflow.test", client=fake.client())
+    os.environ.update(QDRANT_COLLECTION=collection, GOLDEN=gpath, GOLDEN_REF="eval/golden_v1.jsonl.gz", APP_VERSION="7-abc",
+                      MLFLOW_TRACKING_URI="http://mlflow.test", RERANK="1", EMB_MODEL_REF="models/emb/main")
+    pq.from_env = lambda cfg=None: qr
+    skip = f"{tmp}/skip"
+    run = lambda *a: ev.main(["run", "--skip", skip, "--out", f"{tmp}/eval", *a])
+    assert ev.main(["check", "--skip", skip]) == 0 and not os.path.exists(skip)
+    assert run("--min-ndcg", "0.05") == 0
+    r1 = next(iter(fake.runs.values()))
+    t1 = {t["key"]: t["value"] for t in r1["data"]["tags"]}
+    assert t1["gate"] == "passed" and t1["model_version"] == "1" and fake.models["legal-rag-retriever"]["aliases"] == {"candidate": "1"}
+    assert any(a.endswith("per_query.csv") for a in fake.artifacts) and json.load(open(f"{tmp}/eval/summary.json"))["gate"] == "passed"
+    assert ev.main(["promote"]) == 0 and fake.models["legal-rag-retriever"]["aliases"]["champion"] == "1"
+    assert ev.main(["check", "--skip", skip]) == 0 and open(skip).read() == r1["info"]["run_id"]
+    assert run() == 0 and len(fake.runs) == 1, "đã đạt -> không chạy lại"
+    os.remove(skip)
+
+    # cấu hình mới (vd. đổi model) kém hơn champion quá 0,01 -> KHÔNG ĐẠT -> Job exit 1 -> Helm dừng deploy
+    os.environ["EMB_MODEL_REF"] = "models/emb/v2"
+    ch = fake.runs[r1["info"]["run_id"]]["data"]["metrics"]
+    for x in ch:
+        if x["key"] == ev.MAIN:
+            x["value"] = sq[ev.MAIN] + 0.05
+    assert run("--min-ndcg", "0.05") == 1
+    r2 = list(fake.runs.values())[-1]
+    assert {t["key"]: t["value"] for t in r2["data"]["tags"]}["gate"] == "failed" and r2["info"]["status"] == "FAILED"
+    assert fake.models["legal-rag-retriever"]["aliases"]["champion"] == "1"
+    assert ev.main(["promote"]) == 0                         # không có run đạt -> không đổi champion, không báo lỗi
+    # bộ câu hỏi chuẩn mới: điểm không so được với champion (chấm trên bộ cũ) -> chỉ xét ngưỡng tối thiểu
+    os.environ["GOLDEN_REF"] = "eval/golden_v2.jsonl.gz"
+    assert run("--min-ndcg", "0.05") == 0
+    # thí nghiệm: không xét cổng, luôn exit 0
+    assert run("--no-gate", "--alpha", "0.5", "--name", "thử alpha") == 0
+    assert {t["key"]: t["value"] for t in list(fake.runs.values())[-1]["data"]["tags"]}["purpose"] == "experiment"
+    # MLflow sập: vẫn đánh giá và quyết định theo ngưỡng tối thiểu
+    ev.Mlflow = lambda: (_ for _ in ()).throw(ev.MlflowError(0, "DOWN", "down"))
+    assert run("--min-ndcg", "0.05") == 0 and run("--min-ndcg", "0.99") == 1
+    print(f"✓ MLOps: nDCG@10 {sq[ev.MAIN]:.3f} (Qdrant == file) · check → run → promote · đã đạt thì bỏ qua · tụt so với champion thì chặn")
+
+
+def check_build_tools(fr):
+    """Chunker + tạo nhãn bộ câu hỏi chuẩn (code dùng trong notebook Kaggle) — chép self-test của 2 notebook cũ."""
+    import pandas as pd
+    from pipeline import chunker as lc
+    from mlops import labels as lb
+    c = lc.WhitespaceCounter()
+    assert lc.split_khoan("Thực hiện theo Điều 8. Nghị định số 38/2006/NĐ-CP. 1.1. Hàng tháng.") is None
+    pre, items = lc.split_khoan("Gồm: 1. Khoản một; 2. Khoản hai; 3. Khoản ba.")
+    assert pre == "Gồm:" and [l for l, _ in items] == ["1", "2", "3"]
+    long = "Trong Luật này: " + " ".join(f"{i}. Thuật ngữ {i} " + "giải thích " * 30 + "." for i in range(1, 6))
+    ch = lc.chunk_article(long, "Điều 3. Giải thích từ ngữ", "Đề mục", "", counter=c, max_tokens=80)
+    assert all(x.tokens <= 80 for x in ch) and ch[0].khoan_from == "1"
+    m = lc.parse_source_note("(Điều 26 Bộ luật số 45/2019/QH14 Lao động ngày 20/11/2019 của Quốc hội, có hiệu lực thi hành kể từ ngày 01/01/2021)")
+    assert (m["origin_doc_type"], m["origin_so_hieu"], m["origin_article"], m["origin_effective_date"]) == ("Bộ luật", "45/2019/QH14", "Điều 26", "2021-01-01")
+
+    docs, by = lb.build_catalog(["(Điều 1 Bộ luật số 91/2015/QH13 Dân sự ngày 24/11/2015 của Quốc hội, có hiệu lực thi hành kể từ ngày 01/01/2017)"],
+                                ["91/2015/QH13"], ["Bộ luật"], ["2017-01-01"])
+    r = lb.CitationResolver(docs, by)
+    assert r.gold_keys("Theo khoản 1 Điều 241 và Ðiều 242 Bộ luật dân sự năm 2015", None,
+                       {"91/2015/qh13|241", "91/2015/qh13|242"})[0] == ["91/2015/qh13|241", "91/2015/qh13|242"]
+    assert r.gold_keys("Điều 129 Bộ luật dân sự", "2012-01-01", {"91/2015/qh13|129"})[0] == []
+    V = lb.ContentValidator({"91/2015/qh13|129": "Điều 9.1.LQ.129. Hiệu lực của giao dịch dân sự vô hiệu"},
+                            {"91/2015/qh13|129": "Giao dịch dân sự vô hiệu không làm phát sinh, thay đổi, chấm dứt quyền"})
+    assert r.gold_keys("Theo Điều 129 Bộ luật dân sự năm 2015 thì người trộm cắp tài sản bị xử lý", None, {"91/2015/qh13|129"}, validator=V)[0] == []
+    assert r.gold_keys("Theo Điều 129 Bộ luật dân sự năm 2015 về hiệu lực của giao dịch dân sự vô hiệu", None,
+                       {"91/2015/qh13|129"}, validator=V)[0] == ["91/2015/qh13|129"]
+    assert lb.to_iso_date("05/03/2020") == "2020-03-05" and lb.to_iso_date(None) is None
+
+    # cả quy trình trên index giả: câu trả lời chép nội dung Điều + ghi số hiệu -> có đáp án; câu lạc đề -> không
+    ch = fr.chunks
+    rows = []
+    for i in range(0, len(ch), 2):
+        c0 = ch.iloc[i]
+        rows.append(dict(item_id=f"a{i}", lv_name="Lao động", title="t", question_text="Xin hỏi luật sư về trường hợp của tôi như sau ạ?",
+                         date_sent="2022-05-01", answer_text=f"Căn cứ {c0.origin_article} {c0.origin_doc_type} số {c0.origin_so_hieu}: {c0.body}"))
+    rows.append(dict(item_id="x", lv_name="", title="t", question_text="Câu hỏi không có căn cứ nào cả, đúng không ạ?",
+                     date_sent="2022-05-01", answer_text="Bạn nên liên hệ cơ quan có thẩm quyền."))
+    Q, st = lb.build_golden(ch, pd.DataFrame(rows), log=lambda *a: None)
+    assert "x" not in set(Q.item_id) and len(Q) >= 0.9 * (len(rows) - 1), st
+    key_of = dict(zip(ch.index, fr.keys))
+    assert all(g == [key_of[int(it[1:])]] for it, g in zip(Q.item_id, Q.gold)), "đáp án phải đúng Điều đã chép"
+    print(f"✓ chunker v3 + tạo nhãn bộ câu hỏi chuẩn ({len(Q)}/{len(rows)} câu có đáp án đúng Điều)")
 
 
 if __name__ == "__main__":

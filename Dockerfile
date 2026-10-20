@@ -18,6 +18,7 @@ COPY prod/requirements.txt prod/requirements.txt
 RUN pip install -r prod/requirements.txt
 COPY legal_core/ legal_core/
 COPY prod/ prod/
+COPY mlops/ mlops/
 
 FROM base AS test
 COPY pipeline/ pipeline/

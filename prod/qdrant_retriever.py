@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from legal_core.search import Config, Searcher, SparseQuery, encode_query, fuse, load_embedder, load_reranker, qdrant_client
-from prod.telemetry import stage
+from prod.telemetry import DENSE_TOP1, stage
 
 log = logging.getLogger("legal_rag")
 PAYLOAD = ["key", "embed_text", "body", "citation", "title", "effective_date", "article_text", "article_len"]
@@ -40,6 +41,8 @@ class QdrantRetriever(Searcher):
         with stage("qdrant_query", collection=self.collection, bm25_terms=len(qi)):
             res = self.client.query_batch_points(self.collection, requests=reqs)
         run = [([p.id for p in r.points], [p.score for p in r.points]) for r in res] + [([], [])]
+        if run[0][1]:
+            DENSE_TOP1.observe(run[0][1][0])          # cosine của chunk gần nhất: thấp = câu hỏi lạ so với dữ liệu
         with stage("fuse"):
             return fuse(*run[0], *run[1], self.cfg)
 
@@ -55,6 +58,20 @@ class QdrantRetriever(Searcher):
                                   article=dict(citation=p["citation"], title=p["title"], effective_date=p.get("effective_date"),
                                                text=p["article_text"], len=p.get("article_len")))
         return out
+
+
+def config_from_env() -> Config:
+    env = os.environ.get
+    return Config(device=env("DEVICE") or None, emb_model=env("EMB_MODEL") or Config.emb_model,
+                  rerank_model=env("RERANK_MODEL") or Config.rerank_model, depth=Config.depth if env("RERANK") == "1" else 0)
+
+
+def from_env(cfg: Config | None = None) -> "QdrantRetriever":
+    """Cùng cách dựng cho API và Job đánh giá -> đánh giá đúng cấu hình đang chạy production."""
+    env = os.environ.get
+    return QdrantRetriever(cfg or config_from_env(), collection=env("QDRANT_COLLECTION", "phapdien_v1"),
+                           vocab_path=env("BM25_VOCAB", "bm25_vocab.json.gz"), url=os.environ["QDRANT_URL"],
+                           api_key=env("QDRANT_API_KEY"))
 
 
 class _TracedReranker:
