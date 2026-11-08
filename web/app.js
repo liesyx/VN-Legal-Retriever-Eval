@@ -12,6 +12,16 @@ const form = $("#composer");
 const input = $("#q");
 const send = $("#send");
 const tpl = $("#tpl-turn");
+const newChat = $("#new-chat");
+
+/* ---------- ngữ cảnh hỏi tiếp: chỉ giữ trong tab này, server không lưu ----------
+   Mỗi lượt trả lời thành công thêm {q, a}; lần hỏi sau gửi kèm MAX_TURNS lượt gần nhất.
+   n8n ghép câu hỏi tiếp với lịch sử thành câu hỏi đầy đủ rồi mới tìm Điều luật.
+   Tải lại trang hoặc bấm "Cuộc hỏi mới" là bắt đầu lại. */
+const MAX_TURNS = 4;
+const MAX_ANSWER = 1200;     // API nhận tối đa 1500 ký tự mỗi câu trả lời
+let history = [];
+const PLACEHOLDER = input.placeholder;
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const today = new Date().toISOString().slice(0, 10);
@@ -93,6 +103,11 @@ function startProgress(turn) {
   return () => timers.forEach(clearTimeout);
 }
 
+const forHistory = (answer) => String(answer || "")
+  .replace(/\s*\[(\d{1,2})\]/g, "")                       // số trích dẫn [n] chỉ có nghĩa trong lượt đó
+  .replace(/\n*[^\n]*thông tin tham khảo[^\n]*$/i, "")   // bỏ câu nhắc cuối
+  .replace(/\s+/g, " ").trim().slice(0, MAX_ANSWER);
+
 async function ask(question, turn) {
   const stop = startProgress(turn);
   const progress = $(".progress", turn);
@@ -108,7 +123,7 @@ async function ask(question, turn) {
     const res = await fetch(API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, k: 5 }),
+      body: JSON.stringify({ question, k: 5, history: turn._hist }),
       signal: ctrl.signal,
     });
     data = await res.json().catch(() => null);
@@ -130,7 +145,16 @@ async function ask(question, turn) {
     answer.innerHTML = renderAnswer(data.answer);
     answer.hidden = false;
     renderSources(turn, data.sources || [], data.used_sources || []);
-    turn._fb = { trace_id: data.trace_id || null, question, sources: (data.sources || []).map((x) => x.key).filter(Boolean) };
+    showUnderstood(turn, question, data.standalone_question);
+    showUnverified(turn, data.unverified_citations);
+    const standalone = String(data.standalone_question || "").trim();
+    turn._fb = { trace_id: data.trace_id || null, question, standalone,
+                 sources: (data.sources || []).map((x) => x.key).filter(Boolean) };
+    if (!turn._done) {                    // gửi lại một lượt đã trả lời thì không thêm lần nữa
+      history.push({ q: question, a: forHistory(data.answer) });
+      history = history.slice(-MAX_TURNS);
+      turn._done = true;
+    }
     resetVote(turn);
   } else {
     $(".failure-text", failure).textContent = problem || data?.reply_text || "Chưa tìm thấy Điều luật phù hợp. Thử kể rõ hơn tình huống của bạn.";
@@ -138,12 +162,29 @@ async function ask(question, turn) {
   }
 }
 
+function showUnderstood(turn, question, standalone) {
+  const el = $(".understood", turn);
+  const s = String(standalone || "").trim();
+  el.hidden = !(turn._hist.length && s && s !== question.trim());     // chỉ hiện với câu hỏi tiếp
+  if (!el.hidden) el.innerHTML = `Hệ thống hiểu câu hỏi là: <b>${esc(s)}</b>`;
+}
+
+function showUnverified(turn, cites) {
+  const el = $(".unverified", turn);
+  const list = Array.isArray(cites) ? cites.filter(Boolean) : [];
+  el.hidden = !list.length;
+  if (list.length) el.textContent = `Câu trả lời có nhắc ${list.join(", ")} nhưng các Điều này không nằm trong danh sách Điều luật hệ thống tìm được. Hãy tự kiểm tra lại trước khi dựa vào.`;
+}
+
 function addTurn(question) {
   const turn = tpl.content.firstElementChild.cloneNode(true);
+  turn._hist = history.slice(-MAX_TURNS);          // ngữ cảnh tại lúc hỏi (gửi lại câu này vẫn dùng đúng ngữ cảnh đó)
   $(".question", turn).textContent = question;
   $(".retry", turn).addEventListener("click", () => ask(question, turn));
   thread.append(turn);
   document.body.classList.add("has-thread");
+  newChat.hidden = false;
+  input.placeholder = "Hỏi tiếp, ví dụ: thế nếu chưa làm hợp đồng tặng cho thì sao?";
   turn.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" });
   ask(question, turn);
 }
@@ -193,9 +234,22 @@ thread.addEventListener("click", (e) => {
   target._t = setTimeout(() => target.classList.remove("lit"), 2200);
 });
 
+/* ---------- cuộc hỏi mới: xoá ngữ cảnh ---------- */
+newChat.addEventListener("click", () => {
+  if (!newChat.disabled) {
+    history = [];
+    thread.replaceChildren();
+    document.body.classList.remove("has-thread");
+    newChat.hidden = true;
+    input.placeholder = PLACEHOLDER;
+    input.focus();
+  }
+});
+
 /* ---------- composer ---------- */
 function setBusy(busy) {
   send.disabled = busy;
+  newChat.disabled = busy;
   send.textContent = busy ? "Đang tra…" : "Hỏi";
 }
 

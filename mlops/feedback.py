@@ -30,12 +30,13 @@ def pull(loki: str, days: float, vote: str = "down", limit: int = 5000) -> list[
     for stream in r.json()["data"]["result"]:
         md = stream["stream"]                      # structured metadata (vote, question, sources, ask_trace_id) nằm cùng label
         for ts, _line in stream["values"]:
-            q = (md.get("question") or "").strip()
+            # câu hỏi tiếp ("thế còn trường hợp...") vô nghĩa khi đứng một mình -> dùng câu đầy đủ n8n đã ghép
+            q = (md.get("standalone") or md.get("question") or "").strip()
             if not q or q in seen:
                 continue
             seen.add(q)
             tid = md.get("ask_trace_id") or ""
-            out.append({"item_id": f"fb-{tid[:12] or ts}", "split": "feedback", "lv_name": "", "query": q, "gold": [],
+            out.append({"item_id": f"fb-{tid[:12] or ts}", "split": "feedback", "lv_name": "", "query": q, "asked": (md.get("question") or "").strip(), "gold": [],
                         "shown": [s for s in (md.get("sources") or "").split(",") if s], "comment": md.get("comment", ""),
                         "ask_trace_id": tid, "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(int(ts) / 1e9))})
     return sorted(out, key=lambda x: x["time"])

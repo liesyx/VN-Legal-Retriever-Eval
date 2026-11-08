@@ -20,6 +20,7 @@
       <span class="brand-name">Hỏi Pháp điển</span>
     </a>
     <p class="topbar-note">Tra cứu trong Bộ Pháp điển Việt Nam, 65.499 Điều luật</p>
+    <button type="button" class="new-chat" id="new-chat" hidden>Cuộc hỏi mới</button>
   </header>
 
   <main id="main">
@@ -48,6 +49,7 @@
     <li class="turn">
       <div class="turn-main">
         <p class="question"></p>
+        <p class="understood" hidden></p>
         <div class="progress" role="status">
           <ol class="steps">
             <li data-step="0">Hiểu câu hỏi</li>
@@ -57,6 +59,7 @@
           <p class="progress-hint">Thường mất 20 đến 40 giây.</p>
         </div>
         <div class="answer" hidden></div>
+        <p class="unverified" hidden></p>
         <div class="vote" hidden>
           <span class="vote-q">Câu trả lời này có giúp được bạn?</span>
           <button type="button" class="vote-btn" data-vote="up" aria-label="Có ích">👍 Có ích</button>

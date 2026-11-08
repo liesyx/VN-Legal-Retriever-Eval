@@ -144,3 +144,22 @@ python -m mlops.feedback merge golden_v1.jsonl.gz feedback_down.jsonl -o golden_
 ```
 Tắt cổng tạm thời: `quality.enabled: false`. Máy chậm: `quality.sample: 150` (đổi sample = cấu hình mới, chấm lại).
 Đánh giá chấm câu hỏi gốc (không qua LLM viết lại), nên số đo so được với benchmark (hybrid 0,428).
+
+## Hỏi tiếp (ngữ cảnh hội thoại) và workflow n8n — cập nhật 08/11/2026
+
+- **Ngữ cảnh chỉ giữ ở giao diện** (mảng `history` trong tab, tối đa 4 lượt, bỏ số trích dẫn `[n]`). Server không lưu gì.
+  Tải lại trang hoặc bấm "Cuộc hỏi mới" là bắt đầu lại.
+- `/ask` nhận `{"question", "k", "history": [{"q", "a"}]}` (≤ 4 lượt, `a` ≤ 1.500 ký tự), chuyển nguyên sang n8n.
+- n8n, node "Viết lại câu hỏi": LLM trả 2 dòng `Câu hỏi đầy đủ:` (câu hỏi tiếp ghép ngữ cảnh; `-` nếu không có lịch sử
+  hoặc đổi chủ đề) và `Tiêu đề:`. `/search` nhận `question = "tiêu đề. câu hỏi đầy đủ"`, `rerank_query = tiêu đề`.
+  Đo trên 483 câu test golden_v1 qua API thật (không rerank): câu đầy đủ 0,4296 · chỉ tiêu đề 0,4374 ·
+  **tiêu đề + câu đầy đủ 0,4665** (p = 0,0001). Đo lại: `API_TOKEN=... python -m mlops.eval_api golden_v1.jsonl.gz`.
+- Kết quả trả về thêm `standalone_question` (giao diện hiện "Hệ thống hiểu câu hỏi là…", 👎 gửi kèm để gán nhãn)
+  và `unverified_citations` (số Điều câu trả lời nhắc mà không có trong nguồn → giao diện cảnh báo).
+- **Hai lỗi đã gặp với model `deepseek-v4-flash` qua proxy OpenAI-compatible:**
+  1. Model mặc định "suy nghĩ" và tiêu hết `maxTokens` → câu trả lời rỗng hoặc bị cắt (`finish_reason: length`).
+     Đã tắt bằng `options.extraBody = {"thinking": {"type": "disabled"}}` (phải là chuỗi JSON). Đổi model/proxy thì kiểm tra lại.
+  2. Proxy **bỏ system message** (promptTokens chỉ tính phần người dùng) → LLM không nhận quy tắc "chỉ dùng Điều được đưa".
+     Mọi hướng dẫn giờ nằm trong tin nhắn người dùng, không dùng mục System Message của node.
+- Tham số các node đã sửa lưu ở `n8n/legal-ask.nodes.json`; kiểm thử biểu thức: `node tests/test_n8n.js`;
+  kiểm thử giao diện (trình duyệt thật): `python -m tests.test_web`.

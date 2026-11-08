@@ -66,10 +66,6 @@ The project is built as an **MLOps system**, not just an app: every data or mode
 * Corpus: [tmquan/phapdien-moj-gov-vn](https://huggingface.co/datasets/tmquan/phapdien-moj-gov-vn) — the Vietnamese Legal Code from the Ministry of Justice
 * Evaluation questions: [tmquan/pbgdpl-vn-legal-qna](https://huggingface.co/datasets/tmquan/pbgdpl-vn-legal-qna) — 4,593 real citizen questions answered by Ministry of Justice officers
 
-**Available at::**
-* Site: [https://legal.oci.lexsy.pro.vn/](https://legal.oci.lexsy.pro.vn/) — the Vietnamese Legal RAG Retriever
-
-
 **Project Structure**
 ```txt
   ├── legal_core                              /* Retrieval algorithm shared by production and build */
@@ -99,10 +95,12 @@ The project is built as an **MLOps system**, not just an app: every data or mode
   │    ├── evaluate.py                        /* check / run / promote — the quality gate + experiments */
   │    ├── report.py                          /* One-page HTML report with charts (report.html in MLflow) */
   │    ├── mlflow_rest.py                     /* Minimal MLflow REST client (no mlflow package in the image) */
+  │    ├── eval_api.py                        /* Compare query strategies directly on the live /search API */
   │    ├── feedback.py                        /* Collect thumbs-down questions from Loki, merge into a new golden set */
   │    ├── bench_lib.py                       /* Benchmark library (TF-IDF, RRF, full metrics, Holm, randomization test) */
   │    ├── bench_dashboard.py                 /* Self-contained benchmark dashboard (dashboard.html) */
   │    └── bench_mlflow.py                    /* Log the benchmark to MLflow: parent run + one child run per method */
+  ├── n8n/legal-ask.nodes.json               /* Parameters of the n8n Q&A workflow nodes (rewrite, search, answer) */
   ├── kaggle
   │    ├── legal_rag_build.ipynb              /* Build index + golden set, evaluate, gate, publish */
   │    └── legal_rag_benchmark.ipynb          /* Compare 8 retrieval methods, log to MLflow */
@@ -133,6 +131,8 @@ The project is built as an **MLOps system**, not just an app: every data or mode
   │    └── Dockerfile                         /* busybox httpd image */
   ├── tests
   │    ├── test_all.py                        /* Full test suite run by Jenkins */
+  │    ├── test_web.py                        /* Browser test of the web UI (follow-up questions, new chat) */
+  │    ├── test_n8n.js                        /* Tests of the n8n workflow expressions (node tests/test_n8n.js) */
   │    ├── fixture.py                         /* Small fake index (90 Articles) in the notebook output format */
   │    └── fake_mlflow.py                     /* In-memory MLflow for testing the gate flow */
   ├── images                                  /* Screenshots displayed in this README + rename_images.ps1 */
@@ -259,8 +259,8 @@ The production configuration (hybrid 0.7 · dense + 0.3 · BM25, no rerank) is s
 Run it with **Save Version → Save & Run All** so the output (index + golden set) is saved for the benchmark notebook.
 ![](images/09_kaggle_report.png)
 *The report shown in the notebook (and saved to MLflow as `report.html`): score vs. thresholds, hits in top-k, rank of the first correct Article, score per legal domain.*
-![](images/10_mlflow_run.png)
 
+![](images/10_mlflow_run.png)
 *The run in MLflow: 29 metrics, 13 parameters, tags `fingerprint`, `gate`, `dataset_rev`, `model_rev`, `code_commit`.*
 
 #### 4. Benchmark 8 retrieval methods

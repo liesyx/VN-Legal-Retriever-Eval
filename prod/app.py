@@ -3,7 +3,8 @@
 Env: QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION, BM25_VOCAB, EMB_MODEL, RERANK=0|1, RERANK_MODEL, DEVICE, API_TOKEN,
      N8N_WEBHOOK_URL, ALLOWED_ORIGINS (domain giao diện, cách nhau dấu phẩy), ASK_PER_MINUTE
      + biến telemetry (OTEL_EXPORTER_OTLP_*_ENDPOINT, METRICS_PORT): xem prod/telemetry.py
-POST /ask     (giao diện web)   {"question": "...", "k": 5}  -> chuyển sang n8n (LLM viết lại + trả lời), trả nguyên kết quả
+POST /ask     (giao diện web)   {"question": "...", "k": 5, "history": [{"q": "...", "a": "..."}]}
+              -> chuyển sang n8n (LLM ghép câu hỏi tiếp với lịch sử thành câu hỏi đầy đủ, tìm, trả lời), trả nguyên kết quả
 POST /feedback (giao diện web)  {"trace_id": "...", "vote": "up"|"down", "question": "...", "sources": ["key", ...]}
 POST /search  (n8n, X-API-Key)  {"question": "...", "rerank_query": "...", "k": 8, "max_chars": 2500}
 GET  /health
@@ -84,9 +85,16 @@ def search(q: Query):
 
 
 # ---------- /ask: giao diện web -> backend -> n8n (n8n gọi lại /search) ----------
+class Turn(BaseModel):
+    """Một lượt hỏi trước đó (giao diện giữ trong tab; server không lưu)."""
+    q: str = Field(..., min_length=1, max_length=2000)
+    a: str = Field("", max_length=1500)
+
+
 class Ask(BaseModel):
     question: str = Field(..., min_length=5, max_length=2000)
     k: int = Field(5, ge=1, le=10)
+    history: list[Turn] = Field(default_factory=list, max_length=4)   # 4 lượt gần nhất, cũ -> mới
 
 
 HITS: dict = defaultdict(deque)          # IP -> thời điểm các lần hỏi trong 60 giây gần nhất
@@ -135,8 +143,8 @@ async def ask(q: Ask):
     if ctx.is_valid:
         data["trace_id"] = format(ctx.trace_id, "032x")      # giao diện gửi kèm khi bấm 👍/👎 -> tra lại trace + log
     tm.ASK.labels("ok" if data.get("ok") else "no_answer").inc()
-    log.info("ask %d ký tự -> %s, %d nguồn, n8n %.1f s", len(q.question), "ok" if data.get("ok") else "không trả lời",
-             len(data.get("sources") or []), time.perf_counter() - t0)
+    log.info("ask %d ký tự, %d lượt trước -> %s, %d nguồn, n8n %.1f s", len(q.question), len(q.history),
+             "ok" if data.get("ok") else "không trả lời", len(data.get("sources") or []), time.perf_counter() - t0)
     return data
 
 
@@ -145,6 +153,7 @@ class Feedback(BaseModel):
     vote: Literal["up", "down"]
     trace_id: str | None = Field(None, pattern=r"^[0-9a-f]{32}$")
     question: str = Field("", max_length=2000)
+    standalone: str = Field("", max_length=2000)   # câu hỏi đầy đủ sau khi ghép lịch sử (câu hỏi tiếp); dùng khi gán nhãn
     sources: list[str] = Field(default_factory=list, max_length=20)
     comment: str = Field("", max_length=500)
 
@@ -156,5 +165,5 @@ def feedback(f: Feedback, request: Request):
     tm.FEEDBACK.labels(f.vote).inc()
     # extra -> thuộc tính OTLP -> structured metadata trong Loki: lọc được bằng | vote="down"
     log.info("feedback %s: %s", f.vote, f.question[:200].replace("\n", " "),
-             extra={"vote": f.vote, "ask_trace_id": f.trace_id or "", "question": f.question,
+             extra={"vote": f.vote, "ask_trace_id": f.trace_id or "", "question": f.question, "standalone": f.standalone,
                     "sources": ",".join(x[:120] for x in f.sources), "comment": f.comment})

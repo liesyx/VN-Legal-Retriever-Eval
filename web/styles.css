@@ -100,6 +100,19 @@ body.has-thread .intro { display: none; }
   font: 500 clamp(21px, 2.4vw, 26px)/1.35 var(--serif); letter-spacing: -0.01em;
 }
 
+/* câu hỏi tiếp: hệ thống hiểu thành câu đầy đủ nào */
+.understood { margin: -14px 0 22px; max-width: var(--measure); font-size: 14px; color: var(--ink-2); }
+.understood b { font-weight: 500; color: var(--ink); }
+/* câu trả lời nhắc Điều không có trong danh sách tìm được */
+.unverified {
+  max-width: var(--measure); margin: 0 0 16px; padding: 10px 14px; font-size: 14px;
+  border-left: 3px solid var(--wait); background: var(--wait-wash);
+}
+.new-chat {
+  flex: none; background: none; border: 1px solid var(--ink); border-radius: 6px;
+  padding: 6px 14px; font-weight: 500; font-size: 14px;
+}
+
 .progress { color: var(--ink-2); }
 .steps { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 15px; }
 .steps li { display: inline-flex; align-items: center; gap: 8px; opacity: .45; transition: opacity .3s; }

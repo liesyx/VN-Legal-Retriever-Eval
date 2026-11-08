@@ -1,0 +1,184 @@
+{
+ "workflow": "Legal RAG prod – hỏi đáp (LLM n8n + API /search)",
+ "workflowId": "j6uq2ajuwgCYAfKa",
+ "note": "Tham số các node đã sửa ngày 08/11/2026 (bản đang chạy). Model: deepseek-v4-flash qua proxy OpenAI-compatible, options.extraBody = {\"thinking\": {\"type\": \"disabled\"}}. Proxy bỏ system message nên mọi hướng dẫn nằm trong text.",
+ "nodes": {
+  "Chuẩn hoá câu hỏi": {
+   "assignments": {
+    "assignments": [
+     {
+      "id": "q",
+      "name": "question",
+      "type": "string",
+      "value": "={{ String($json.body?.question ?? $json.question ?? \"\").trim() }}"
+     },
+     {
+      "id": "k",
+      "name": "k",
+      "type": "number",
+      "value": "={{ Math.min(20, Math.max(1, Number($json.body?.k ?? $json.k ?? 8) || 8)) }}"
+     },
+     {
+      "id": "h",
+      "name": "history",
+      "type": "array",
+      "value": "={{ (() => { const h = $json.body?.history ?? $json.history; return (Array.isArray(h) ? h : []).slice(-4).map(t => ({ q: String(t?.q ?? '').trim().slice(0, 2000), a: String(t?.a ?? '').trim().slice(0, 1500) })).filter(t => t.q); })() }}"
+     },
+     {
+      "id": "ht",
+      "name": "history_text",
+      "type": "string",
+      "value": "={{ (() => { const h = $json.body?.history ?? $json.history; return (Array.isArray(h) ? h : []).slice(-4).map(t => ({ q: String(t?.q ?? '').trim().slice(0, 2000), a: String(t?.a ?? '').trim().slice(0, 1500) })).filter(t => t.q); })().map((t, i) => 'Lượt ' + (i + 1) + '\\nNgười hỏi: ' + t.q + (t.a ? '\\nTrợ lý: ' + t.a : '')).join('\\n\\n') }}"
+     }
+    ]
+   },
+   "options": {}
+  },
+  "Khi workflow khác gọi": {
+   "workflowInputs": {
+    "values": [
+     {
+      "name": "question"
+     },
+     {
+      "name": "k",
+      "type": "number"
+     },
+     {
+      "name": "history",
+      "type": "array"
+     }
+    ]
+   }
+  },
+  "Viết lại câu hỏi": {
+   "promptType": "define",
+   "text": "={{ \"Bạn giúp hệ thống tra cứu văn bản luật Việt Nam hiểu câu hỏi của người dân. Có thể kèm LỊCH SỬ HỘI THOẠI (các lượt hỏi trước) và luôn có CÂU HỎI MỚI.\\n\\nTrả về ĐÚNG 2 dòng, không thêm gì khác:\\nCâu hỏi đầy đủ: <...>\\nTiêu đề: <...>\\n\\nDòng \\\"Câu hỏi đầy đủ\\\":\\n- Không có lịch sử hội thoại: ghi đúng một dấu gạch ngang \\\"-\\\".\\n- Có lịch sử và câu hỏi mới là câu hỏi tiếp (dùng \\\"thế\\\", \\\"vậy\\\", \\\"còn\\\", \\\"trường hợp đó\\\", \\\"nếu vậy\\\", hỏi tiếp về cùng sự việc...): viết lại thành MỘT câu hỏi tự đứng được, ghép đủ tình tiết pháp lý cần thiết từ các lượt trước (ai với ai, tài sản gì, đã xảy ra gì) và điều mới được hỏi. Tối đa khoảng 80 từ. Không thêm tình tiết người hỏi chưa nói. Không trả lời câu hỏi.\\n- Có lịch sử nhưng câu hỏi mới là chuyện khác hẳn: chép lại nguyên câu hỏi mới.\\n\\nDòng \\\"Tiêu đề\\\": 5–15 từ, một dòng, không dấu chấm cuối; nêu vấn đề pháp lý chính của câu hỏi đầy đủ (hoặc của câu hỏi mới nếu không có lịch sử) bằng thuật ngữ pháp lý (vd. \\\"đăng ký thường trú\\\" thay vì \\\"nhập hộ khẩu\\\"); bỏ tên người, số tiền, ngày tháng.\\n\\nVí dụ 1 (không có lịch sử):\\nCÂU HỎI MỚI: Năm 2010 bố mẹ tôi cho vợ chồng tôi mảnh đất, đã sang tên sổ đỏ. Nay bố mẹ muốn đòi lại để chia cho em tôi. Có được không?\\nCâu hỏi đầy đủ: -\\nTiêu đề: Đòi lại quyền sử dụng đất đã tặng cho con\\n\\nVí dụ 2 (câu hỏi tiếp):\\nLỊCH SỬ HỘI THOẠI:\\nLượt 1\\nNgười hỏi: Bố mẹ đã sang tên đất cho tôi, nay đòi lại để chia cho em tôi được không?\\nTrợ lý: Không, nếu việc tặng cho hợp pháp và đã đăng ký thì quyền sử dụng đất đã thuộc về bạn...\\nCÂU HỎI MỚI: Thế nếu lúc cho có điều kiện là tôi phải nuôi bố mẹ mà tôi không làm thì sao?\\nCâu hỏi đầy đủ: Bố mẹ tặng cho con quyền sử dụng đất kèm điều kiện con phải phụng dưỡng, con không thực hiện điều kiện thì bố mẹ có đòi lại được đất không?\\nTiêu đề: Đòi lại đất tặng cho có điều kiện khi con không phụng dưỡng\\n\\nVí dụ 3 (câu hỏi tiếp):\\nLỊCH SỬ HỘI THOẠI:\\nLượt 1\\nNgười hỏi: Vợ chồng ly hôn, con mới 2 tuổi thì ai được nuôi?\\nTrợ lý: Con dưới 36 tháng tuổi về nguyên tắc được giao cho mẹ trực tiếp nuôi...\\nCÂU HỎI MỚI: Còn người không nuôi thì phải cấp dưỡng bao nhiêu?\\nCâu hỏi đầy đủ: Sau khi ly hôn, người không trực tiếp nuôi con 2 tuổi phải cấp dưỡng cho con như thế nào và mức cấp dưỡng được xác định ra sao?\\nTiêu đề: Nghĩa vụ và mức cấp dưỡng nuôi con sau ly hôn\" + '\\n\\n=====\\n\\n' + ($json.history_text ? 'LỊCH SỬ HỘI THOẠI:\\n' + $json.history_text + '\\n\\n' : '') + 'CÂU HỎI MỚI:\\n' + $json.question }}",
+   "messages": {
+    "messageValues": []
+   },
+   "batching": {}
+  },
+  "Câu hỏi ngắn": {
+   "assignments": {
+    "assignments": [
+     {
+      "id": "asked",
+      "name": "asked",
+      "type": "string",
+      "value": "={{ $('Chuẩn hoá câu hỏi').item.json.question }}"
+     },
+     {
+      "id": "q",
+      "name": "question",
+      "type": "string",
+      "value": "={{ (() => { const n = $('Chuẩn hoá câu hỏi').item.json; if (!n.history.length) return n.question; const raw = String($json.text ?? '').trim(); const m = raw.match(/Câu hỏi đầy đủ:\\s*(.+)/i); if (m) { const s = m[1].trim().replace(/^[\"'“”]+|[\"'“”]+$/g, ''); return (s && s !== '-' && s.length >= 10) ? s : n.question; } return raw ? n.question : (n.history.at(-1).q + ' ' + n.question).slice(0, 4000); })() }}"
+     },
+     {
+      "id": "k",
+      "name": "k",
+      "type": "number",
+      "value": "={{ $('Chuẩn hoá câu hỏi').item.json.k }}"
+     },
+     {
+      "id": "follow",
+      "name": "is_follow_up",
+      "type": "boolean",
+      "value": "={{ $('Chuẩn hoá câu hỏi').item.json.history.length > 0 }}"
+     },
+     {
+      "id": "rq",
+      "name": "rerank_query",
+      "type": "string",
+      "value": "={{ (() => { const raw = String($json.text ?? '').trim(); const m = raw.match(/Tiêu đề:\\s*(.+)/i); const t = (m ? m[1] : (raw.includes('Câu hỏi đầy đủ') ? '' : raw.split('\\n')[0])).trim().replace(/^[\"'“”\\s]+|[\"'“”.\\s]+$/g, ''); const n = t.split(/\\s+/).filter(Boolean).length; return (n >= 3 && n <= 30) ? t : ''; })() }}"
+     }
+    ]
+   },
+   "options": {}
+  },
+  "Tìm Điều luật (API /search)": {
+   "jsonBody": "={{ JSON.stringify({ question: ($json.rerank_query ? $json.rerank_query + '. ' : '') + $json.question, rerank_query: $json.rerank_query || '', k: $json.k, max_chars: 2500 }) }}"
+  },
+  "Trả lời theo nguồn": {
+   "promptType": "define",
+   "text": "={{ \"Bạn là trợ lý tra cứu pháp luật Việt Nam. Hôm nay là \" + $now.toFormat('dd/MM/yyyy') + \". Bên dưới là các Điều luật hệ thống tự tìm trong Bộ Pháp điển cho câu hỏi này; người hỏi không nhìn thấy chúng.\\nQuy tắc:\\n- CHỈ dùng các Điều luật trong mục \\\"CÁC ĐIỀU LUẬT TÌM ĐƯỢC\\\". Không dùng kiến thức ngoài, không bịa số Điều. Không nhắc tới số Điều, số hiệu văn bản nào không có trong mục đó, kể cả khi bạn nghĩ nó đúng.\\n- Nếu có LỊCH SỬ HỘI THOẠI: chỉ dùng để hiểu người hỏi đang hỏi tiếp về chuyện gì. Không lặp lại câu trả lời cũ; trả lời đúng điều mới được hỏi. Điều luật nêu ở lượt trước không còn là căn cứ nếu không có trong danh sách lượt này.\\n- Mỗi ý quan trọng ghi nguồn bằng số trong ngoặc vuông [1], [2] đúng số thứ tự. Bỏ qua Điều không liên quan.\\n- Trả lời trực tiếp như chuyên gia. Tuyệt đối không viết các cụm như \\\"nguồn\\\", \\\"NGUỒN\\\", \\\"tài liệu được cung cấp\\\", \\\"đoạn trích\\\", \\\"quy định được cung cấp\\\".\\n- Điều có ghi \\\"CHƯA CÓ HIỆU LỰC\\\": nói rõ quy định này chỉ áp dụng từ ngày đó, không trình bày như quy định đang áp dụng.\\n- Mức phạt, mức tiền, thuế, phí, lệ phí lấy từ văn bản có hiệu lực trước năm 2024: nêu rõ số hiệu và năm của văn bản, và nhắc người hỏi kiểm tra xem đã có văn bản mới thay thế chưa vì các mức này thường được thay đổi.\\n- Nếu các Điều luật không đủ để trả lời, nói rõ là chưa tìm thấy quy định phù hợp và gợi ý hỏi cơ quan có thẩm quyền hoặc luật sư.\\n- Ngắn gọn (tối đa khoảng 200 từ), dễ hiểu, tiếng Việt, không dùng bảng. Cuối câu trả lời nhắc đây là thông tin tham khảo, không thay tư vấn pháp lý.\" + '\\n\\n=====\\n\\n' + (() => { const today = $now.toISODate(); const fmt = d => d ? d.split('-').reverse().join('/') : ''; const c = $('Câu hỏi ngắn').item.json; const ht = $('Chuẩn hoá câu hỏi').item.json.history_text; return (ht ? 'LỊCH SỬ HỘI THOẠI (chỉ để hiểu ngữ cảnh, KHÔNG phải căn cứ pháp lý):\\n' + ht + '\\n\\n' : '') + 'CÁC ĐIỀU LUẬT TÌM ĐƯỢC CHO CÂU HỎI NÀY:\\n\\n' + $json.body.sources.map(s => '[' + s.n + '] ' + s.citation + (s.effective_date ? (s.effective_date > today ? ' — CHƯA CÓ HIỆU LỰC, áp dụng từ ' + fmt(s.effective_date) : ' — hiệu lực từ ' + fmt(s.effective_date)) : '') + '\\n' + (s.text || s.title)).join('\\n\\n') + '\\n\\nCÂU HỎI' + (c.is_follow_up ? ' MỚI (câu hỏi tiếp)' : '') + ':\\n' + c.asked + (c.is_follow_up && c.question !== c.asked ? '\\n(Hiểu đầy đủ là: ' + c.question + ')' : ''); })() }}",
+   "messages": {
+    "messageValues": []
+   },
+   "batching": {}
+  },
+  "Định dạng câu trả lời": {
+   "assignments": {
+    "assignments": [
+     {
+      "id": "ok",
+      "name": "ok",
+      "type": "boolean",
+      "value": "={{ true }}"
+     },
+     {
+      "id": "answer",
+      "name": "answer",
+      "type": "string",
+      "value": "={{ String($json.text ?? '').trim() }}"
+     },
+     {
+      "id": "used",
+      "name": "used_sources",
+      "type": "array",
+      "value": "={{ (() => { const n = ($('Tìm Điều luật (API /search)').item.json.body.sources || []).length; return [...new Set([...String($json.text ?? '').matchAll(/\\[(\\d+)\\]/g)].map(m => +m[1]))].filter(x => x >= 1 && x <= n).sort((a, b) => a - b); })() }}"
+     },
+     {
+      "id": "unv",
+      "name": "unverified_citations",
+      "type": "array",
+      "value": "={{ (() => { const have = new Set(($('Tìm Điều luật (API /search)').item.json.body.sources || []).map(s => (String(s.citation).match(/Điều\\s+(\\d+[a-zđ]?)/i) || [])[1]).filter(Boolean)); const out = []; for (const m of String($json.text ?? '').matchAll(/[Đđ]iều\\s+(\\d+[a-zđ]?)((?:\\s*(?:,|và|đến|–|-)\\s*\\d+[a-zđ]?)*)/g)) { for (const n of [m[1], ...(m[2].match(/\\d+[a-zđ]?/g) || [])]) { if (!have.has(n) && !out.includes('Điều ' + n)) out.push('Điều ' + n); } } return out; })() }}"
+     },
+     {
+      "id": "reply",
+      "name": "reply_text",
+      "type": "string",
+      "value": "={{ (() => { const src = ($('Tìm Điều luật (API /search)').item.json.body.sources || []); const used = [...new Set([...String($json.text ?? '').matchAll(/\\[(\\d+)\\]/g)].map(m => +m[1]))]; const show = src.filter(s => used.includes(s.n)); const list = (show.length ? show : src.slice(0, 3)).map(s => '[' + s.n + '] ' + s.citation + ' – ' + s.title).join('\\n'); const unv = (() => { const have = new Set(($('Tìm Điều luật (API /search)').item.json.body.sources || []).map(s => (String(s.citation).match(/Điều\\s+(\\d+[a-zđ]?)/i) || [])[1]).filter(Boolean)); const out = []; for (const m of String($json.text ?? '').matchAll(/[Đđ]iều\\s+(\\d+[a-zđ]?)((?:\\s*(?:,|và|đến|–|-)\\s*\\d+[a-zđ]?)*)/g)) { for (const n of [m[1], ...(m[2].match(/\\d+[a-zđ]?/g) || [])]) { if (!have.has(n) && !out.includes('Điều ' + n)) out.push('Điều ' + n); } } return out; })(); return String($json.text ?? '').trim() + (unv.length ? '\\n\\n⚠ Câu trả lời có nhắc ' + unv.join(', ') + ' nhưng các Điều này không nằm trong danh sách Điều luật tìm được; hãy kiểm tra lại.' : '') + '\\n\\nNguồn:\\n' + list + '\\n\\n(Dữ liệu Bộ Pháp điển thu thập ngày 21/07/2026; văn bản ban hành năm 2025–2026 mới được cập nhật một phần.)'; })() }}"
+     },
+     {
+      "id": "sources",
+      "name": "sources",
+      "type": "array",
+      "value": "={{ ($('Tìm Điều luật (API /search)').item.json.body.sources || []).map(s => ({ n: s.n, citation: s.citation, title: s.title, key: s.key, effective_date: s.effective_date, text: s.text })) }}"
+     },
+     {
+      "id": "sq",
+      "name": "standalone_question",
+      "type": "string",
+      "value": "={{ $('Câu hỏi ngắn').item.json.question }}"
+     },
+     {
+      "id": "rq",
+      "name": "rerank_query",
+      "type": "string",
+      "value": "={{ $('Tìm Điều luật (API /search)').item.json.body.rerank_query }}"
+     },
+     {
+      "id": "rw",
+      "name": "rewrite",
+      "type": "string",
+      "value": "={{ $('Câu hỏi ngắn').item.json.rerank_query ? 'llm' : 'api-fallback' }}"
+     },
+     {
+      "id": "timings",
+      "name": "timings_ms",
+      "type": "object",
+      "value": "={{ $('Tìm Điều luật (API /search)').item.json.body.timings_ms ?? {} }}"
+     },
+     {
+      "id": "err",
+      "name": "error",
+      "type": "string",
+      "value": ""
+     }
+    ]
+   },
+   "options": {}
+  }
+ }
+}

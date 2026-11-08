@@ -129,6 +129,19 @@ def main(index_dir):
         assert c.post("/ask", headers=ip, json={"question": "Câu hỏi thứ hai", "k": 5}).status_code == 200
         assert c.post("/ask", headers=ip, json={"question": "Câu hỏi thứ ba", "k": 5}).status_code == 429
         assert c.post("/ask", headers={"X-Forwarded-For": "5.6.7.8"}, json={"question": "IP khác vẫn hỏi được"}).status_code == 200
+        # hỏi tiếp: history đi nguyên sang n8n (server không lưu), có giới hạn số lượt và độ dài
+        import json as _json
+        api.HITS.clear()
+        hist = [{"q": "Bố mẹ đã sang tên đất cho tôi, nay đòi lại được không?", "a": "Không, nếu hợp đồng tặng cho hợp pháp [1]."}]
+        assert c.post("/ask", headers={"X-Forwarded-For": "2.2.2.2"},
+                      json={"question": "Thế nếu tôi không phụng dưỡng bố mẹ thì sao?", "history": hist}).status_code == 200
+        sent = _json.loads(seen[-1].content)
+        assert sent["history"] == hist and sent["question"].startswith("Thế nếu"), sent
+        assert _json.loads(seen[0].content)["history"] == []                       # câu hỏi đầu: history rỗng
+        too_many = [{"q": f"câu {i}", "a": ""} for i in range(5)]
+        assert c.post("/ask", headers={"X-Forwarded-For": "3.3.3.3"}, json={"question": "quá nhiều lượt", "history": too_many}).status_code == 422
+        assert c.post("/ask", headers={"X-Forwarded-For": "3.3.3.4"},
+                      json={"question": "trả lời quá dài", "history": [{"q": "x", "a": "a" * 1501}]}).status_code == 422
         api.STATE["http"] = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(500)))
         assert c.post("/ask", headers={"X-Forwarded-For": "9.9.9.9"}, json={"question": "n8n đang lỗi thì sao"}).status_code == 502
     print("✓ API (/search, /ask, giới hạn theo IP)")
