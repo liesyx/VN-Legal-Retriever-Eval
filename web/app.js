@@ -145,7 +145,7 @@ async function ask(question, turn) {
     answer.innerHTML = renderAnswer(data.answer);
     answer.hidden = false;
     renderSources(turn, data.sources || [], data.used_sources || []);
-    showUnderstood(turn, question, data.standalone_question);
+    showUnderstood(turn, question, data.standalone_question, data.rerank_query);
     showUnverified(turn, data.unverified_citations);
     const standalone = String(data.standalone_question || "").trim();
     turn._fb = { trace_id: data.trace_id || null, question, standalone,
@@ -162,11 +162,17 @@ async function ask(question, turn) {
   }
 }
 
-function showUnderstood(turn, question, standalone) {
+// Câu hỏi tiếp: hiện câu đầy đủ đã ghép ngữ cảnh. Câu đầu (hoặc câu đầy đủ trùng câu gốc): hiện tiêu đề vấn đề pháp lý
+// mà LLM rút ra (rerank_query). Không có gì khác câu gốc thì ẩn.
+function showUnderstood(turn, question, standalone, title) {
   const el = $(".understood", turn);
+  const q = question.trim().toLowerCase();
   const s = String(standalone || "").trim();
-  el.hidden = !(turn._hist.length && s && s !== question.trim());     // chỉ hiện với câu hỏi tiếp
-  if (!el.hidden) el.innerHTML = `Hệ thống hiểu câu hỏi là: <b>${esc(s)}</b>`;
+  const t = String(title || "").trim();
+  const text = (turn._hist.length && s && s.toLowerCase() !== q) ? s
+             : (t && t !== "-" && t.toLowerCase() !== q) ? t : "";
+  el.hidden = !text;
+  if (text) el.innerHTML = `Hệ thống hiểu câu hỏi là: <b>${esc(text)}</b>`;
 }
 
 function showUnverified(turn, cites) {

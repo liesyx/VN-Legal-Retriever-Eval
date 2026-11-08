@@ -27,6 +27,7 @@ def reply(n, req):
     data = {"ok": True, "answer": f"Trả lời lượt {n} [1].\n\nThông tin tham khảo, không thay tư vấn pháp lý.",
             "sources": SRC, "used_sources": [1], "trace_id": "a" * 32,
             "standalone_question": ("Bố mẹ đòi lại đất đã tặng cho khi con không phụng dưỡng" if follow else body["question"]),
+            "rerank_query": "Đòi lại quyền sử dụng đất đã tặng cho con" if n == 1 else "",
             "unverified_citations": ["Điều 500"] if n == 2 else []}
     return data
 
@@ -56,7 +57,8 @@ def main():
         page.press("#q", "Enter")
         turns.nth(0).locator(".answer").wait_for()
         assert sent[0]["history"] == [], sent[0]
-        assert turns.nth(0).locator(".understood").is_hidden()          # câu đầu: không hiện "hệ thống hiểu là"
+        und0 = turns.nth(0).locator(".understood")                      # câu đầu: hiện tiêu đề vấn đề pháp lý
+        assert und0.is_visible() and "Đòi lại quyền sử dụng đất đã tặng cho con" in und0.inner_text(), und0.inner_text()
         assert turns.nth(0).locator(".unverified").is_hidden()
         assert page.locator("#new-chat").is_visible()
 

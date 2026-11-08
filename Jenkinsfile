@@ -93,7 +93,7 @@ pipeline {
             --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
             --label org.opencontainers.image.version=$IMAGE_TAG \
             -t $IMAGE:$IMAGE_TAG .
-          docker build -t $WEB_IMAGE:$IMAGE_TAG web
+          docker build --build-arg VERSION=$IMAGE_TAG -t $WEB_IMAGE:$IMAGE_TAG web
         '''
       }
     }
