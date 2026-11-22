@@ -40,3 +40,13 @@ grafana:
   resources:
     requests: { cpu: 25m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
+
+headlamp:
+  enabled: true
+  image: ghcr.io/headlamp-k8s/headlamp:v0.46.0
+  nodePort: 30085                        # Coolify: headlamp.oci.lexsy.pro.vn -> http://10.0.0.47:30085 — BẮT BUỘC basic auth ở proxy
+  namespaces: [legal-rag, observability] # nơi Headlamp được xem (Jenkins phải là admin ở các namespace này)
+  operate: true                          # thêm xoá pod, terminal, port-forward, restart/scale; false = chỉ xem
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }

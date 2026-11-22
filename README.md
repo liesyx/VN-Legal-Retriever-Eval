@@ -8,6 +8,7 @@
       - [3. MLflow stack](#3-mlflow-stack)
       - [4. Secrets](#4-secrets)
       - [5. Domains: Coolify proxy to NodePorts](#5-domains-coolify-proxy-to-nodeports)
+      - [6. Operate the cluster with k9s](#6-operate-the-cluster-with-k9s)
   - [III. Build the data and evaluate on Kaggle](#iii-build-the-data-and-evaluate-on-kaggle)
       - [1. Chunking and embedding the Legal Code](#1-chunking-and-embedding-the-legal-code)
       - [2. Golden set: questions with known answers](#2-golden-set-questions-with-known-answers)
@@ -20,6 +21,7 @@
   - [V. Deploy the observability stack](#v-deploy-the-observability-stack)
       - [1. Tracing with Jaeger \& OpenTelemetry](#1-tracing-with-jaeger--opentelemetry)
       - [2. Logs with Loki, metrics with Prometheus, dashboards in Grafana](#2-logs-with-loki-metrics-with-prometheus-dashboards-in-grafana)
+      - [3. Kubernetes web UI with Headlamp](#3-kubernetes-web-ui-with-headlamp)
   - [VI. Setup Jenkins (CI/CD)](#vi-setup-jenkins-cicd)
       - [1. Connect Jenkins to k3s](#1-connect-jenkins-to-k3s)
       - [2. Add Harbor credentials](#2-add-harbor-credentials)
@@ -114,9 +116,15 @@ The project is built as an **MLOps system**, not just an app: every data or mode
   │    │         ├── web.yaml                 /* Web UI Deployment + NodePort 30082 */
   │    │         ├── eval-job.yaml            /* Quality gate: pre-upgrade eval Job + post-upgrade promote Job */
   │    │         └── _helpers.tpl             /* Shared labels, fetch initContainer, retriever / quality env */
+  │    ├── k9s                                /* k9s access: not a chart, applied once by a cluster admin */
+  │    │    ├── rbac.yaml                     /* SA demo:k9s-operator: view + light operations in legal-rag, observability */
+  │    │    ├── k9s.ps1, k9s.sh               /* Create a short-lived kubeconfig for that SA, then open k9s */
+  │    │    ├── docker-compose.yaml           /* Or run k9s in a container on the k3s VM (host network) */
+  │    │    ├── docker-compose.coolify.yaml   /* Same, as a Coolify resource opened through its web terminal */
+  │    │    └── config                        /* hotkeys.yaml, plugins.yaml (API /health, per-stage /search latency) */
   │    └── observability                      /* Chart of the observability stack (namespace observability) */
   │         ├── Chart.yaml
-  │         ├── values.yaml                   /* Images, retention, storage, NodePorts (Grafana 30083, Jaeger 30084) */
+  │         ├── values.yaml                   /* Images, retention, storage, NodePorts (Grafana 30083, Jaeger 30084, Headlamp 30085) */
   │         ├── cluster-rbac.yaml             /* Applied once by a cluster admin: namespace, Jenkins RoleBinding, Prometheus ClusterRole */
   │         ├── dashboards/legal-rag.json     /* Grafana dashboard "legal-rag API" */
   │         └── templates
@@ -124,6 +132,7 @@ The project is built as an **MLOps system**, not just an app: every data or mode
   │              ├── loki.yaml                /* Loki single binary, OTLP logs, 7-day retention */
   │              ├── prometheus.yaml          /* Prometheus + RBAC, pod and cAdvisor scraping */
   │              ├── grafana.yaml             /* Grafana with provisioned datasources and dashboard */
+  │              ├── headlamp.yaml            /* Headlamp: Kubernetes web UI + its RBAC in legal-rag/observability */
   │              └── _config.tpl              /* Prometheus / Loki config, Grafana datasources (logs <-> traces links) */
   ├── web                                     /* Web UI */
   │    ├── index.html, app.js, styles.css     /* Chat page: answer with citations [n], cited Articles, 👍 / 👎 */
@@ -223,8 +232,38 @@ kubectl -n observability create secret generic grafana-admin \
 | `legal-api.oci.lexsy.pro.vn` | 30081 | API |
 | `grafana.oci.lexsy.pro.vn` | 30083 | Grafana |
 | `jaeger.oci.lexsy.pro.vn` | 30084 | Jaeger UI |
+| `headlamp.oci.lexsy.pro.vn` | 30085 | Headlamp (Kubernetes web UI) — **basic auth required**, see V.3 |
 
 Add one route per domain in Coolify pointing to `http://<node-ip>:<nodeport>`. Large image pushes to Harbor also need Traefik's read timeout lifted (`--entrypoints.https.transport.respondingTimeouts.readTimeout=0s`), otherwise uploads longer than 60 s are cut.
+
+#### 6. Operate the cluster with k9s
+[k9s](https://k9scli.io/) is the terminal UI used for day-to-day operations. It does not run in the cluster and does not use the k3s admin kubeconfig: it logs in as the ServiceAccount `demo:k9s-operator`, which can **view** everything in `legal-rag` and `observability` (no Secrets), see namespaces, nodes and CPU/RAM, and do light operations there — logs, shell, port-forward, delete a pod, restart or scale a Deployment. It cannot touch Secrets, Services, RBAC or other namespaces.
+
+A cluster admin applies the RBAC once:
+```bash
+kubectl apply -f helm/k9s/rbac.yaml
+kubectl auth can-i delete pods -n legal-rag --as=system:serviceaccount:demo:k9s-operator     # yes
+kubectl auth can-i get secrets -n legal-rag --as=system:serviceaccount:demo:k9s-operator     # no
+```
+Then, from a machine whose current kubectl context is the cluster admin (needs `kubectl` and `k9s` in PATH):
+```powershell
+.\helm\k9s\k9s.ps1            # Windows; Linux/macOS: helm/k9s/k9s.sh
+```
+The script creates `helm/k9s/kubeconfig-k9s.yaml` (git-ignored) with a 30-day token from `kubectl create token`, then opens k9s with the project's config (`K9S_CONFIG_DIR=helm/k9s/config`). Renew an expired token with `-Renew` (`RENEW=1` in bash). The API server address is copied from the admin context; on k3s it is `https://127.0.0.1:6443`, which works through an SSH tunnel (`ssh -L 6443:127.0.0.1:6443 <vm>`) — otherwise pass `-Server https://<vm-ip>:6443` (`SERVER=` in bash). Do not expose port 6443 to the internet.
+
+Or run k9s **on the VM itself** in a container — no k9s/kubectl install and no tunnel (uses the k3s admin kubeconfig by default; set `KUBECONFIG_FILE=./kubeconfig-k9s.yaml` to use the narrow SA instead):
+```bash
+cd helm/k9s && sudo docker compose run --rm k9s
+```
+On **Coolify**, deploy `helm/k9s/docker-compose.coolify.yaml` (Raw Compose Deployment, no domain): the container just sleeps, and you open k9s from Coolify's web terminal. Its kubeconfig lives on the VM at `/opt/k9s/kubeconfig` (not in git) — see the comments in that file.
+
+| Key | Where | Action |
+|---|---|---|
+| `Shift-1` / `Shift-2` | anywhere | pods in `legal-rag` / `observability` |
+| `Shift-3` / `Shift-4` | anywhere | Jobs (quality gate) / events in `legal-rag` |
+| `Shift-H` | Deployment `legal-rag` | `GET /health` inside the API container |
+| `Shift-M` | Deployment `legal-rag` | average time per `/search` stage (embed, qdrant_query, fuse, ...) since the pod started |
+| `l`, `s`, `Shift-F`, `r` | built-in | logs, shell, port-forward, rollout restart |
 
 ## III. Build the data and evaluate on Kaggle
 All heavy work — chunking, GPU embedding, building the golden set, scoring — runs in **one Kaggle notebook**, `kaggle/legal_rag_build.ipynb`. The notebook contains no processing code: its first cell clones this repository and imports `pipeline/` and `mlops/`, so Kaggle and production always run the exact same algorithm.
@@ -327,6 +366,29 @@ The API sends traces over OTLP straight to Jaeger (`jaeger.observability:4318`).
 
 ![](images/15_grafana_logs.png)
 *Logs in Loki; every line carries `trace_id` and links to Jaeger.*
+
+#### 3. Kubernetes web UI with Headlamp
+[Headlamp](https://headlamp.dev/) — the Kubernetes SIG UI project that replaces the archived Kubernetes Dashboard — is deployed by the same chart (`headlamp.enabled`), so Jenkins ships it with every push and nobody has to log in to the server. It runs on NodePort 30085 and signs in automatically with its own ServiceAccount (`-unsafe-use-service-account-token`). That account only gets what Jenkins itself may grant, inside `headlamp.namespaces` (`legal-rag`, `observability`): view everything except Secrets, plus, with `headlamp.operate: true`, delete pods, open a terminal, port-forward, restart and scale. It has no cluster-wide rights, so the cluster overview (nodes, namespace list) shows "forbidden"; in Headlamp's cluster settings, set the allowed namespaces to `legal-rag, observability`.
+
+Because the URL alone grants these rights, the domain **must** sit behind basic auth in Coolify's proxy (Traefik). In Coolify: *Servers → Proxy → Dynamic Configurations*, add:
+```yaml
+http:
+  middlewares:
+    headlamp-auth:
+      basicAuth:
+        users:
+          - "admin:$apr1$..."          # openssl passwd -apr1   (Git Bash on Windows has openssl)
+  routers:
+    headlamp:
+      rule: Host(`headlamp.oci.lexsy.pro.vn`)
+      entryPoints: [https]
+      middlewares: [headlamp-auth]
+      service: headlamp
+      tls: { certResolver: letsencrypt }
+  services:
+    headlamp:
+      loadBalancer: { servers: [{ url: "http://10.0.0.47:30085" }] }
+```
 
 ## VI. Setup Jenkins (CI/CD)
 
