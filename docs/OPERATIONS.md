@@ -71,11 +71,6 @@ helm -n legal-rag rollback legal-rag                            # quay lại b�
 
 UI web: Headlamp tại `headlamp.oci.lexsy.pro.vn` (NodePort 30085, chart observability, Jenkins tự deploy) — tự đăng nhập bằng SA `headlamp`, quyền chỉ trong legal-rag/observability; domain phải có basic auth ở proxy Coolify (README V.3).
 
-Xem/vận hành bằng k9s (SA `demo:k9s-operator`, không dùng kubeconfig admin; admin cụm chạy 1 lần `kubectl apply -f helm/k9s/rbac.yaml`):
-```powershell
-.\helm\k9s\k9s.ps1           # tạo kubeconfig token 30 ngày (lần đầu / -Renew) rồi mở k9s; Linux: helm/k9s/k9s.sh
-```
-Shift-1/2: pod legal-rag/observability · Shift-3: Job đánh giá · Shift-H (trên Deployment API): /health · Shift-M: thời gian TB từng bước /search.
 
 ## Test
 ```bash

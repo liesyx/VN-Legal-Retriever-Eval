@@ -5,6 +5,3 @@ __pycache__/
 bm25_vocab*.json.gz
 trivy-*.json
 
-# k9s: kubeconfig chứa token + file k9s tự sinh
-helm/k9s/kubeconfig-k9s.yaml
-helm/k9s/config/config.yaml
